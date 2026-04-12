@@ -238,14 +238,19 @@ fun NavigationItem(
     Surface(
         selected = isSelected,
         onClick = onSelect,
-        scale = SelectableSurfaceDefaults.scale(focusedScale = 1.1f),
+        scale = SelectableSurfaceDefaults.scale(focusedScale = 1.05f),
         colors = SelectableSurfaceDefaults.colors(
             containerColor = Color.Transparent,
-            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
-            focusedSelectedContainerColor = MaterialTheme.colorScheme.primaryContainer
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            focusedContainerColor = MaterialTheme.colorScheme.primary,
+            focusedContentColor = MaterialTheme.colorScheme.onPrimary,
+            selectedContainerColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.2f),
+            selectedContentColor = MaterialTheme.colorScheme.secondary,
+            focusedSelectedContainerColor = MaterialTheme.colorScheme.primary,
+            focusedSelectedContentColor = MaterialTheme.colorScheme.onPrimary
         ),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier.fillMaxWidth(),
+        shape = SelectableSurfaceDefaults.shape(MaterialTheme.shapes.small)
     ) {
         Text(
             text = section.name,
@@ -285,10 +290,13 @@ fun AppLauncherGrid() {
                     ?: pm.getLaunchIntentForPackage(packageName)
                 
                 if (launchIntent != null) {
+                    val banner = resolveInfo.activityInfo.loadBanner(pm)
+                    val drawable = banner ?: resolveInfo.loadIcon(pm)
+                    
                     LaunchableApp(
                         name = resolveInfo.loadLabel(pm).toString(),
                         packageName = packageName,
-                        icon = resolveInfo.loadIcon(pm).toBitmap().asImageBitmap(),
+                        icon = drawable.toBitmap().asImageBitmap(),
                         intent = launchIntent
                     )
                 } else {
@@ -299,7 +307,7 @@ fun AppLauncherGrid() {
     }
 
     LazyVerticalGrid(
-        columns = GridCells.Fixed(4), // Reduced from 6 for better visibility on non-4K screens
+        columns = GridCells.Fixed(3), // Reduced to 3 for wide banners on non-4K screens
         contentPadding = PaddingValues(vertical = 16.dp),
         modifier = Modifier.fillMaxSize()
     ) {
@@ -481,15 +489,19 @@ fun ChannelItem(channel: TvChannel, isSelected: Boolean = false, onClick: () -> 
         onClick = onClick,
         selected = isSelected,
         modifier = Modifier
-            .padding(vertical = 6.dp, horizontal = 12.dp)
+            .padding(vertical = 4.dp, horizontal = 12.dp)
             .fillMaxWidth()
-            .height(90.dp),
+            .height(80.dp),
         scale = SelectableSurfaceDefaults.scale(focusedScale = 1.05f),
         colors = SelectableSurfaceDefaults.colors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
-            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
-            focusedSelectedContainerColor = MaterialTheme.colorScheme.primaryContainer
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            focusedContainerColor = MaterialTheme.colorScheme.primary,
+            focusedContentColor = MaterialTheme.colorScheme.onPrimary,
+            selectedContainerColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.2f),
+            selectedContentColor = MaterialTheme.colorScheme.secondary,
+            focusedSelectedContainerColor = MaterialTheme.colorScheme.primary,
+            focusedSelectedContentColor = MaterialTheme.colorScheme.onPrimary
         ),
         shape = SelectableSurfaceDefaults.shape(MaterialTheme.shapes.medium)
     ) {
@@ -502,14 +514,14 @@ fun ChannelItem(channel: TvChannel, isSelected: Boolean = false, onClick: () -> 
                     model = channel.logoUrl,
                     contentDescription = null,
                     modifier = Modifier
-                        .size(64.dp)
+                        .size(56.dp)
                         .padding(end = 16.dp),
                     contentScale = ContentScale.Fit
                 )
             } else {
                 Box(
                     modifier = Modifier
-                        .size(64.dp)
+                        .size(56.dp)
                         .padding(end = 16.dp),
                     contentAlignment = Alignment.Center
                 ) {
@@ -679,31 +691,22 @@ fun AppItem(app: LaunchableApp, onClick: () -> Unit) {
         onClick = onClick,
         modifier = Modifier
             .padding(12.dp)
-            .aspectRatio(1f),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.15f),
+            .aspectRatio(16f / 9f),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
-            focusedContainerColor = MaterialTheme.colorScheme.primaryContainer
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            focusedContainerColor = MaterialTheme.colorScheme.primary,
+            focusedContentColor = MaterialTheme.colorScheme.onPrimary
         ),
         shape = ClickableSurfaceDefaults.shape(MaterialTheme.shapes.medium)
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(12.dp).fillMaxSize()
-        ) {
+        Box(modifier = Modifier.fillMaxSize()) {
             Image(
                 bitmap = app.icon,
                 contentDescription = app.name,
-                modifier = Modifier.size(64.dp).weight(1f),
-                contentScale = ContentScale.Fit
-            )
-            Text(
-                text = app.name,
-                style = MaterialTheme.typography.labelLarge,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 8.dp).fillMaxWidth()
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.FillBounds
             )
         }
     }
