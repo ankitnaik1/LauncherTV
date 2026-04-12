@@ -299,7 +299,7 @@ fun AppLauncherGrid() {
     }
 
     LazyVerticalGrid(
-        columns = GridCells.Fixed(6),
+        columns = GridCells.Fixed(4), // Reduced from 6 for better visibility on non-4K screens
         contentPadding = PaddingValues(vertical = 16.dp),
         modifier = Modifier.fillMaxSize()
     ) {
@@ -378,7 +378,8 @@ fun VideoPlayer(
 ) {
     val context = LocalContext.current
     var showOverlay by remember { mutableStateOf(false) }
-    val focusRequester = remember { FocusRequester() }
+    val videoFocusRequester = remember { FocusRequester() }
+    val listFocusRequester = remember { FocusRequester() }
     
     BackHandler {
         if (showOverlay) {
@@ -412,9 +413,13 @@ fun VideoPlayer(
             .onKeyEvent { keyEvent ->
                 if (keyEvent.type == KeyEventType.KeyDown) {
                     when (keyEvent.key) {
-                        Key.DirectionUp, Key.DirectionDown -> {
-                            showOverlay = true
-                            true
+                        Key.DirectionUp, Key.DirectionDown, Key.DirectionCenter, Key.Enter -> {
+                            if (!showOverlay) {
+                                showOverlay = true
+                                true
+                            } else {
+                                false
+                            }
                         }
                         else -> false
                     }
@@ -422,7 +427,7 @@ fun VideoPlayer(
                     false
                 }
             }
-            .focusRequester(focusRequester)
+            .focusRequester(videoFocusRequester)
             .focusable()
     ) {
         AndroidView(
@@ -440,13 +445,14 @@ fun VideoPlayer(
                 modifier = Modifier
                     .fillMaxHeight()
                     .width(350.dp)
-                    .background(Color.Black.copy(alpha = 0.8f))
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.95f))
                     .align(Alignment.CenterStart)
             ) {
                 TvSection(
                     m3uLink = m3uLink, 
                     channelsState = channelsState,
-                    selectedUrl = url
+                    selectedUrl = url,
+                    modifier = Modifier.focusRequester(listFocusRequester)
                 ) { newUrl ->
                     onChannelSelect(newUrl)
                     showOverlay = false
@@ -456,8 +462,14 @@ fun VideoPlayer(
     }
 
     LaunchedEffect(showOverlay) {
-        if (!showOverlay) {
-            focusRequester.requestFocus()
+        if (showOverlay) {
+            try {
+                listFocusRequester.requestFocus()
+            } catch (e: Exception) {
+                Log.e("LaunchTV", "Failed to request list focus", e)
+            }
+        } else {
+            videoFocusRequester.requestFocus()
         }
     }
 }
@@ -469,16 +481,17 @@ fun ChannelItem(channel: TvChannel, isSelected: Boolean = false, onClick: () -> 
         onClick = onClick,
         selected = isSelected,
         modifier = Modifier
-            .padding(vertical = 4.dp, horizontal = 8.dp)
+            .padding(vertical = 6.dp, horizontal = 12.dp)
             .fillMaxWidth()
-            .height(80.dp),
+            .height(90.dp),
         scale = SelectableSurfaceDefaults.scale(focusedScale = 1.05f),
-        glow = SelectableSurfaceDefaults.glow(),
         colors = SelectableSurfaceDefaults.colors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
+            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
             selectedContainerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
             focusedSelectedContainerColor = MaterialTheme.colorScheme.primaryContainer
-        )
+        ),
+        shape = SelectableSurfaceDefaults.shape(MaterialTheme.shapes.medium)
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -592,14 +605,17 @@ fun SettingsSection(m3uLink: String, onSave: (String) -> Unit) {
                     .fillMaxWidth()
                     .focusRequester(focusRequester),
                 textStyle = TextStyle(
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onSurface,
                     fontSize = 18.sp
                 ),
-                cursorBrush = SolidColor(Color.White),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                 decorationBox = { innerTextField ->
                     Box {
                         if (textValue.isEmpty()) {
-                            Text("Enter M3U link here...", color = Color.Gray)
+                            Text(
+                                "Enter M3U link here...",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                            )
                         }
                         innerTextField()
                     }
@@ -662,10 +678,14 @@ fun AppItem(app: LaunchableApp, onClick: () -> Unit) {
     Surface(
         onClick = onClick,
         modifier = Modifier
-            .padding(8.dp)
+            .padding(12.dp)
             .aspectRatio(1f),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
-        glow = ClickableSurfaceDefaults.glow()
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.15f),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
+            focusedContainerColor = MaterialTheme.colorScheme.primaryContainer
+        ),
+        shape = ClickableSurfaceDefaults.shape(MaterialTheme.shapes.medium)
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,

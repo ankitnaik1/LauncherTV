@@ -10,15 +10,32 @@ import androidx.tv.material3.darkColorScheme
 fun LaunchTVTheme(
     content: @Composable () -> Unit,
 ) {
-    // Fire TV and TV apps are typically dark by default for the "10-foot experience"
-    val colorScheme = darkColorScheme(
-        primary = Purple80,
-        secondary = PurpleGrey80,
-        tertiary = Pink80
+    // Gruvbox Dark Color Scheme optimized for Fire TV Stick (non-4K)
+    // Using high contrast colors for better visibility on lower resolution screens
+    val gruvboxColorScheme = darkColorScheme(
+        primary = GruvboxOrange, // Primary action color
+        onPrimary = GruvboxBg0_H,
+        primaryContainer = GruvboxBg1,
+        onPrimaryContainer = GruvboxOrange,
+        secondary = GruvboxGreen,
+        onSecondary = GruvboxBg0_H,
+        secondaryContainer = GruvboxBg2,
+        onSecondaryContainer = GruvboxGreen,
+        tertiary = GruvboxYellow,
+        onTertiary = GruvboxBg0_H,
+        background = GruvboxBg0_H,
+        onBackground = GruvboxFg,
+        surface = GruvboxBg,
+        onSurface = GruvboxFg,
+        surfaceVariant = GruvboxBg1,
+        onSurfaceVariant = GruvboxFg,
+        error = GruvboxRed,
+        onError = GruvboxBg0_H
+        // Removed outline as it's not in TV M3 darkColorScheme
     )
 
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = gruvboxColorScheme,
         typography = Typography,
         content = content
     )
