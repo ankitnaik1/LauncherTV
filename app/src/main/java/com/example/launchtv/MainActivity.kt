@@ -47,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
@@ -68,8 +69,10 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.edit
 import androidx.core.graphics.drawable.toBitmap
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -139,8 +142,15 @@ fun MainScreen() {
     }
 
     var isNavVisible by rememberSaveable { mutableStateOf(false) }
+    var navHadFocus by remember { mutableStateOf(false) }
     val navFocusRequester = remember { FocusRequester() }
     val contentFocusRequester = remember { FocusRequester() }
+
+    if (isNavVisible) {
+        BackHandler {
+            isNavVisible = false
+        }
+    }
 
     val channelsState by produceState<Result<List<TvChannel>>?>(initialValue = null, key1 = m3uLink) {
         if (m3uLink.isNotEmpty()) {
@@ -171,13 +181,10 @@ fun MainScreen() {
 
     LaunchedEffect(isNavVisible) {
         if (isNavVisible) {
+            navHadFocus = false
             navFocusRequester.requestFocus()
         } else {
-            try {
-                contentFocusRequester.requestFocus()
-            } catch (e: Exception) {
-                Log.e("LaunchTV", "Failed to focus content", e)
-            }
+            navHadFocus = false
         }
     }
 
@@ -207,15 +214,7 @@ fun MainScreen() {
                 modifier = Modifier
                     .fillMaxHeight()
                     .width(240.dp)
-                    .padding(top = 32.dp, start = 32.dp, end = 16.dp)
-                    .onKeyEvent {
-                        if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionRight) {
-                            isNavVisible = false
-                            true
-                        } else {
-                            false
-                        }
-                    },
+                    .padding(top = 32.dp, start = 32.dp, end = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Text(
@@ -231,7 +230,6 @@ fun MainScreen() {
                         isSelected = selectedSection == section,
                         onSelect = {
                             selectedSection = section
-                            isNavVisible = false
                         },
                         modifier = if (selectedSection == section) Modifier.focusRequester(navFocusRequester) else Modifier
                     )
@@ -245,8 +243,11 @@ fun MainScreen() {
             modifier = Modifier
                 .fillMaxHeight()
                 .weight(1f)
-                .focusRequester(contentFocusRequester)
-                .focusable()
+                .onFocusChanged {
+                    if (it.hasFocus && isNavVisible) {
+                        isNavVisible = false
+                    }
+                }
                 .padding(
                     top = if (isTVFullScreen) 0.dp else 32.dp,
                     bottom = if (isTVFullScreen) 0.dp else 32.dp,
@@ -275,7 +276,8 @@ fun MainScreen() {
                                 onBack = {
                                     playingUrl = null
                                 },
-                                onExpandNav = { isNavVisible = true }
+                                onExpandNav = { isNavVisible = true },
+                                isNavVisible = isNavVisible
                             )
                         } else {
                             TvSection(
@@ -477,6 +479,7 @@ fun TvSection(
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
+@androidx.annotation.OptIn(UnstableApi::class)
 @Composable
 fun VideoPlayer(
     url: String, 
@@ -484,10 +487,12 @@ fun VideoPlayer(
     channelsState: Result<List<TvChannel>>?,
     onChannelSelect: (String) -> Unit, 
     onBack: () -> Unit,
-    onExpandNav: () -> Unit
+    onExpandNav: () -> Unit,
+    isNavVisible: Boolean = false
 ) {
     val context = LocalContext.current
     var showOverlay by remember { mutableStateOf(false) }
+    var overlayHadFocus by remember { mutableStateOf(false) }
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     
@@ -539,7 +544,21 @@ fun VideoPlayer(
     LaunchedEffect(url) {
         errorMessage = null
         isLoading = true
-        exoPlayer.setMediaItem(MediaItem.fromUri(url))
+        
+        val mediaItem = MediaItem.Builder()
+            .setUri(url)
+            .setMimeType(
+                if (url.contains("m3u8", ignoreCase = true)) {
+                    MimeTypes.APPLICATION_M3U8
+                } else if (url.contains(".ts", ignoreCase = true)) {
+                    "video/mp2t"
+                } else {
+                    null
+                }
+            )
+            .build()
+            
+        exoPlayer.setMediaItem(mediaItem)
         exoPlayer.prepare()
     }
 
@@ -567,13 +586,18 @@ fun VideoPlayer(
                         selectedUrl = url,
                         modifier = Modifier
                             .focusRequester(listFocusRequester)
+                            .onFocusChanged {
+                                if (it.hasFocus) {
+                                    overlayHadFocus = true
+                                } else {
+                                    if (overlayHadFocus) {
+                                        showOverlay = false
+                                    }
+                                }
+                            }
                             .onKeyEvent {
                                 if (it.type == KeyEventType.KeyDown) {
                                     when (it.key) {
-                                        Key.DirectionRight -> {
-                                            showOverlay = false
-                                            true
-                                        }
                                         Key.DirectionLeft -> {
                                             onExpandNav()
                                             true
@@ -586,7 +610,6 @@ fun VideoPlayer(
                             }
                     ) { newUrl ->
                         onChannelSelect(newUrl)
-                        showOverlay = false
                     }
                 }
             }
@@ -665,7 +688,10 @@ fun VideoPlayer(
                 Log.e("LaunchTV", "Failed to request list focus", e)
             }
         } else {
-            videoFocusRequester.requestFocus()
+            overlayHadFocus = false
+            if (!isNavVisible) {
+                videoFocusRequester.requestFocus()
+            }
         }
     }
 }
