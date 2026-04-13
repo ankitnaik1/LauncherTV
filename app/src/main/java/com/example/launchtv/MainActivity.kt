@@ -5,13 +5,13 @@ import android.content.Intent
 import android.net.Uri
 import android.util.Log
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,12 +26,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -66,9 +68,12 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.edit
 import androidx.core.graphics.drawable.toBitmap
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
-import coil.compose.AsyncImage
 import androidx.tv.material3.Button
 import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.ClickableSurfaceDefaults
@@ -77,6 +82,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.SelectableSurfaceDefaults
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import coil.compose.AsyncImage
 import com.example.launchtv.ui.theme.LaunchTVTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -132,6 +138,10 @@ fun MainScreen() {
         mutableStateOf(sharedPrefs.getString("last_played_url", null)) 
     }
 
+    var isNavVisible by rememberSaveable { mutableStateOf(false) }
+    val navFocusRequester = remember { FocusRequester() }
+    val contentFocusRequester = remember { FocusRequester() }
+
     val channelsState by produceState<Result<List<TvChannel>>?>(initialValue = null, key1 = m3uLink) {
         if (m3uLink.isNotEmpty()) {
             value = null // Set to loading
@@ -150,29 +160,62 @@ fun MainScreen() {
         }
     }
 
-    if (playingUrl != null) {
-        VideoPlayer(
-            url = playingUrl!!,
-            m3uLink = m3uLink,
-            channelsState = channelsState,
-            onChannelSelect = { newUrl ->
-                playingUrl = newUrl
-                sharedPrefs.edit(commit = true) {
-                    putString("last_played_url", newUrl)
-                }
-            },
-            onBack = {
-                playingUrl = null
+    LaunchedEffect(channelsState, selectedSection) {
+        if (selectedSection == NavSection.TV && playingUrl == null) {
+            val channels = channelsState?.getOrNull()
+            if (!channels.isNullOrEmpty()) {
+                playingUrl = channels.first().url
             }
-        )
-    } else {
-        Row(modifier = Modifier.fillMaxSize()) {
-            // 1. Left Navigation Panel
+        }
+    }
+
+    LaunchedEffect(isNavVisible) {
+        if (isNavVisible) {
+            navFocusRequester.requestFocus()
+        } else {
+            try {
+                contentFocusRequester.requestFocus()
+            } catch (e: Exception) {
+                Log.e("LaunchTV", "Failed to focus content", e)
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        if (!isNavVisible) {
+            try {
+                contentFocusRequester.requestFocus()
+            } catch (e: Exception) {}
+        }
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxSize()
+            .onKeyEvent {
+                if (!isNavVisible && it.type == KeyEventType.KeyDown && it.key == Key.DirectionLeft) {
+                    isNavVisible = true
+                    true
+                } else {
+                    false
+                }
+            }
+    ) {
+        // 1. Left Navigation Panel
+        if (isNavVisible) {
             Column(
                 modifier = Modifier
                     .fillMaxHeight()
                     .width(240.dp)
-                    .padding(top = 32.dp, start = 32.dp, end = 16.dp),
+                    .padding(top = 32.dp, start = 32.dp, end = 16.dp)
+                    .onKeyEvent {
+                        if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionRight) {
+                            isNavVisible = false
+                            true
+                        } else {
+                            false
+                        }
+                    },
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Text(
@@ -181,47 +224,81 @@ fun MainScreen() {
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(bottom = 32.dp, start = 16.dp)
                 )
-                
+
                 NavSection.entries.forEach { section ->
                     NavigationItem(
                         section = section,
                         isSelected = selectedSection == section,
-                        onSelect = { selectedSection = section }
+                        onSelect = {
+                            selectedSection = section
+                            isNavVisible = false
+                        },
+                        modifier = if (selectedSection == section) Modifier.focusRequester(navFocusRequester) else Modifier
                     )
                 }
             }
+        }
 
-            // 2. Right Content Area
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .weight(1f)
-                    .padding(top = 32.dp, bottom = 32.dp, end = 48.dp, start = 16.dp)
-            ) {
-                Column {
+        // 2. Right Content Area
+        val isTVFullScreen = selectedSection == NavSection.TV && !isNavVisible
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .weight(1f)
+                .focusRequester(contentFocusRequester)
+                .focusable()
+                .padding(
+                    top = if (isTVFullScreen) 0.dp else 32.dp,
+                    bottom = if (isTVFullScreen) 0.dp else 32.dp,
+                    end = if (isTVFullScreen) 0.dp else 48.dp,
+                    start = if (isNavVisible) 16.dp else if (isTVFullScreen) 0.dp else 48.dp
+                )
+        ) {
+            Column {
+                if (!isTVFullScreen) {
                     SectionHeader(selectedSection.name)
-                    when (selectedSection) {
-                        NavSection.Apps -> AppLauncherGrid()
-                        NavSection.TV -> TvSection(
-                            m3uLink = m3uLink,
-                            channelsState = channelsState
-                        ) { url ->
-                            playingUrl = url
-                            sharedPrefs.edit(commit = true) {
-                                putString("last_played_url", url)
+                }
+                when (selectedSection) {
+                    NavSection.Apps -> AppLauncherGrid()
+                    NavSection.TV -> {
+                        if (playingUrl != null) {
+                            VideoPlayer(
+                                url = playingUrl!!,
+                                m3uLink = m3uLink,
+                                channelsState = channelsState,
+                                onChannelSelect = { newUrl ->
+                                    playingUrl = newUrl
+                                    sharedPrefs.edit(commit = true) {
+                                        putString("last_played_url", newUrl)
+                                    }
+                                },
+                                onBack = {
+                                    playingUrl = null
+                                },
+                                onExpandNav = { isNavVisible = true }
+                            )
+                        } else {
+                            TvSection(
+                                m3uLink = m3uLink,
+                                channelsState = channelsState
+                            ) { url ->
+                                playingUrl = url
+                                sharedPrefs.edit(commit = true) {
+                                    putString("last_played_url", url)
+                                }
                             }
                         }
-                        NavSection.Settings -> SettingsSection(
-                            m3uLink = m3uLink,
-                            onSave = { newValue ->
-                                m3uLink = newValue
-                                sharedPrefs.edit(commit = true) { 
-                                    putString("m3u_link", newValue) 
-                                }
-                                Log.d("LaunchTV", "Saved new M3U link and triggering reload")
-                            }
-                        )
                     }
+                    NavSection.Settings -> SettingsSection(
+                        m3uLink = m3uLink,
+                        onSave = { newValue ->
+                            m3uLink = newValue
+                            sharedPrefs.edit(commit = true) { 
+                                putString("m3u_link", newValue) 
+                            }
+                            Log.d("LaunchTV", "Saved new M3U link and triggering reload")
+                        }
+                    )
                 }
             }
         }
@@ -233,7 +310,8 @@ fun MainScreen() {
 fun NavigationItem(
     section: NavSection,
     isSelected: Boolean,
-    onSelect: () -> Unit
+    onSelect: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Surface(
         selected = isSelected,
@@ -249,7 +327,7 @@ fun NavigationItem(
             focusedSelectedContainerColor = MaterialTheme.colorScheme.primary,
             focusedSelectedContentColor = MaterialTheme.colorScheme.onPrimary
         ),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         shape = SelectableSurfaceDefaults.shape(MaterialTheme.shapes.small)
     ) {
         Text(
@@ -290,7 +368,7 @@ fun AppLauncherGrid() {
                     ?: pm.getLaunchIntentForPackage(packageName)
                 
                 if (launchIntent != null) {
-                    val banner = resolveInfo.activityInfo.loadBanner(pm)
+                    val banner = try { resolveInfo.activityInfo.loadBanner(pm) } catch (e: Exception) { null }
                     val drawable = banner ?: resolveInfo.loadIcon(pm)
                     
                     LaunchableApp(
@@ -307,11 +385,14 @@ fun AppLauncherGrid() {
     }
 
     LazyVerticalGrid(
-        columns = GridCells.Fixed(3), // Reduced to 3 for wide banners on non-4K screens
-        contentPadding = PaddingValues(vertical = 16.dp),
+        columns = GridCells.Fixed(3),
+        contentPadding = PaddingValues(bottom = 64.dp, top = 16.dp),
         modifier = Modifier.fillMaxSize()
     ) {
-        items(apps) { app ->
+        items(
+            items = apps,
+            key = { it.packageName }
+        ) { app ->
             AppItem(app) {
                 context.startActivity(app.intent)
             }
@@ -331,19 +412,35 @@ fun TvSection(
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         when {
             m3uLink.isEmpty() -> {
-                Text("Please add an M3U link in Settings to start watching TV")
+                Box(
+                    modifier = Modifier.focusable(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "Please add an M3U link in Settings to start watching TV",
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(32.dp)
+                    )
+                }
             }
             channelsState == null -> {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(
+                    modifier = Modifier.focusable(),
+                    contentAlignment = Alignment.Center
+                ) {
                     Text("Loading channels...")
                 }
             }
             channelsState.isFailure -> {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(
+                    modifier = Modifier.focusable(),
+                    contentAlignment = Alignment.Center
+                ) {
                     Text(
                         text = "Error: ${channelsState.exceptionOrNull()?.message ?: "Unknown error"}",
                         color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(bottom = 16.dp)
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(32.dp)
                     )
                 }
             }
@@ -362,10 +459,13 @@ fun TvSection(
 
                 LazyColumn(
                     state = listState,
-                    contentPadding = PaddingValues(vertical = 16.dp),
+                    contentPadding = PaddingValues(bottom = 128.dp, top = 16.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(channels) { channel ->
+                    items(
+                        items = channels,
+                        key = { it.url }
+                    ) { channel ->
                         ChannelItem(channel, isSelected = channel.url == selectedUrl) {
                             onChannelClick(channel.url)
                         }
@@ -376,16 +476,21 @@ fun TvSection(
     }
 }
 
+@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun VideoPlayer(
     url: String, 
     m3uLink: String, 
     channelsState: Result<List<TvChannel>>?,
     onChannelSelect: (String) -> Unit, 
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onExpandNav: () -> Unit
 ) {
     val context = LocalContext.current
     var showOverlay by remember { mutableStateOf(false) }
+    var isLoading by remember { mutableStateOf(true) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    
     val videoFocusRequester = remember { FocusRequester() }
     val listFocusRequester = remember { FocusRequester() }
     
@@ -398,13 +503,42 @@ fun VideoPlayer(
     }
 
     val exoPlayer = remember {
-        ExoPlayer.Builder(context).build().apply {
-            prepare()
-            playWhenReady = true
-        }
+        val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+            .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+            .setAllowCrossProtocolRedirects(true)
+        
+        val mediaSourceFactory = DefaultMediaSourceFactory(context)
+            .setDataSourceFactory(httpDataSourceFactory)
+
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(mediaSourceFactory)
+            .build().apply {
+                playWhenReady = true
+                addListener(object : Player.Listener {
+                    override fun onPlaybackStateChanged(state: Int) {
+                        isLoading = (state == Player.STATE_BUFFERING)
+                        if (state == Player.STATE_READY) {
+                            errorMessage = null
+                        }
+                    }
+
+                    override fun onPlayerError(error: PlaybackException) {
+                        Log.e("LaunchTV", "ExoPlayer Error: ${error.message}", error)
+                        isLoading = false
+                        errorMessage = when (error.errorCode) {
+                            PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED -> "Network Connection Error"
+                            PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS -> "Source blocked or 404"
+                            PlaybackException.ERROR_CODE_DECODER_INIT_FAILED -> "Unsupported Video Format"
+                            else -> "Cannot play this channel"
+                        }
+                    }
+                })
+            }
     }
 
     LaunchedEffect(url) {
+        errorMessage = null
+        isLoading = true
         exoPlayer.setMediaItem(MediaItem.fromUri(url))
         exoPlayer.prepare()
     }
@@ -418,52 +552,106 @@ fun VideoPlayer(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .onKeyEvent { keyEvent ->
-                if (keyEvent.type == KeyEventType.KeyDown) {
-                    when (keyEvent.key) {
-                        Key.DirectionUp, Key.DirectionDown, Key.DirectionCenter, Key.Enter -> {
-                            if (!showOverlay) {
-                                showOverlay = true
-                                true
-                            } else {
-                                false
+    ) {
+        Row(modifier = Modifier.fillMaxSize()) {
+            if (showOverlay) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .width(350.dp)
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.95f))
+                ) {
+                    TvSection(
+                        m3uLink = m3uLink, 
+                        channelsState = channelsState,
+                        selectedUrl = url,
+                        modifier = Modifier
+                            .focusRequester(listFocusRequester)
+                            .onKeyEvent {
+                                if (it.type == KeyEventType.KeyDown) {
+                                    when (it.key) {
+                                        Key.DirectionRight -> {
+                                            showOverlay = false
+                                            true
+                                        }
+                                        Key.DirectionLeft -> {
+                                            onExpandNav()
+                                            true
+                                        }
+                                        else -> false
+                                    }
+                                } else {
+                                    false
+                                }
                             }
-                        }
-                        else -> false
+                    ) { newUrl ->
+                        onChannelSelect(newUrl)
+                        showOverlay = false
                     }
-                } else {
-                    false
                 }
             }
-            .focusRequester(videoFocusRequester)
-            .focusable()
-    ) {
-        AndroidView(
-            factory = {
-                PlayerView(it).apply {
-                    player = exoPlayer
-                    useController = false
-                }
-            },
-            modifier = Modifier.fillMaxSize()
-        )
 
-        if (showOverlay) {
             Box(
                 modifier = Modifier
                     .fillMaxHeight()
-                    .width(350.dp)
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.95f))
-                    .align(Alignment.CenterStart)
+                    .weight(1f)
+                    .onKeyEvent { keyEvent ->
+                        if (keyEvent.type == KeyEventType.KeyDown) {
+                            when (keyEvent.key) {
+                                Key.DirectionUp, Key.DirectionDown, Key.DirectionCenter, Key.Enter, Key.DirectionLeft -> {
+                                    if (!showOverlay) {
+                                        showOverlay = true
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                }
+                                else -> false
+                            }
+                        } else {
+                            false
+                        }
+                    }
+                    .focusRequester(videoFocusRequester)
+                    .focusable()
             ) {
-                TvSection(
-                    m3uLink = m3uLink, 
-                    channelsState = channelsState,
-                    selectedUrl = url,
-                    modifier = Modifier.focusRequester(listFocusRequester)
-                ) { newUrl ->
-                    onChannelSelect(newUrl)
-                    showOverlay = false
+                AndroidView(
+                    factory = {
+                        PlayerView(it).apply {
+                            player = exoPlayer
+                            useController = false
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                if (isLoading && !showOverlay) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.align(Alignment.Center),
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                if (errorMessage != null && !showOverlay) {
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .background(Color.Black.copy(alpha = 0.7f), MaterialTheme.shapes.medium)
+                            .padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = errorMessage!!,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.headlineSmall
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Press UP/DOWN to change channel",
+                            color = Color.White,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
                 }
             }
         }
@@ -525,7 +713,6 @@ fun ChannelItem(channel: TvChannel, isSelected: Boolean = false, onClick: () -> 
                         .padding(end = 16.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    // Placeholder for missing logo
                     Text("TV", style = MaterialTheme.typography.labelSmall)
                 }
             }
@@ -567,9 +754,7 @@ private fun parseM3U(url: String): List<TvChannel> {
             val trimmedLine = line.trim()
             when {
                 trimmedLine.startsWith("#EXTINF:") -> {
-                    // Extract name
                     currentName = trimmedLine.substringAfterLast(",").trim()
-                    // Extract logo: tvg-logo="http://..."
                     val logoMatch = Regex("""tvg-logo="([^"]+)"""").find(trimmedLine)
                     currentLogo = logoMatch?.groupValues?.get(1) ?: ""
                 }

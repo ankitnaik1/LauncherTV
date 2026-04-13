@@ -1,4 +1,13 @@
 <resources>
-
-    <style name="Theme.LaunchTV" parent="Theme.AppCompat.DayNight.NoActionBar" />
+    <!-- Gruvbox Dark Theme Base -->
+    <style name="Theme.LaunchTV" parent="Theme.AppCompat.NoActionBar">
+        <!-- Gruvbox Dark Background (Bg0_H: #1D2021) -->
+        <item name="android:windowBackground">#1D2021</item>
+        <!-- Optimization: Disable status bar and navigation bar to save screen real estate and resources on TV -->
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowFullscreen">true</item>
+        <!-- Fix White Launch Screen -->
+        <item name="android:windowDisablePreview">false</item>
+        <item name="android:windowShowWallpaper">false</item>
+    </style>
 </resources>
