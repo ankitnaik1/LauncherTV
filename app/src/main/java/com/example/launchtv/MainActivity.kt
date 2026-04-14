@@ -179,12 +179,17 @@ fun MainScreen() {
         }
     }
 
-    LaunchedEffect(isNavVisible) {
+    LaunchedEffect(isNavVisible, selectedSection) {
         if (isNavVisible) {
             navHadFocus = false
             navFocusRequester.requestFocus()
         } else {
             navHadFocus = false
+            try {
+                contentFocusRequester.requestFocus()
+            } catch (e: Exception) {
+                Log.e("LaunchTV", "Failed to request content focus", e)
+            }
         }
     }
 
@@ -197,16 +202,7 @@ fun MainScreen() {
     }
 
     Row(
-        modifier = Modifier
-            .fillMaxSize()
-            .onKeyEvent {
-                if (!isNavVisible && it.type == KeyEventType.KeyDown && it.key == Key.DirectionLeft) {
-                    isNavVisible = true
-                    true
-                } else {
-                    false
-                }
-            }
+        modifier = Modifier.fillMaxSize()
     ) {
         // 1. Left Navigation Panel
         if (isNavVisible) {
@@ -243,6 +239,7 @@ fun MainScreen() {
             modifier = Modifier
                 .fillMaxHeight()
                 .weight(1f)
+                .focusRequester(contentFocusRequester)
                 .onFocusChanged {
                     if (it.hasFocus && isNavVisible) {
                         isNavVisible = false
@@ -260,7 +257,7 @@ fun MainScreen() {
                     SectionHeader(selectedSection.name)
                 }
                 when (selectedSection) {
-                    NavSection.Apps -> AppLauncherGrid()
+                    NavSection.Apps -> AppLauncherGrid(onExpandNav = { isNavVisible = true })
                     NavSection.TV -> {
                         if (playingUrl != null) {
                             VideoPlayer(
@@ -282,7 +279,8 @@ fun MainScreen() {
                         } else {
                             TvSection(
                                 m3uLink = m3uLink,
-                                channelsState = channelsState
+                                channelsState = channelsState,
+                                onExpandNav = { isNavVisible = true }
                             ) { url ->
                                 playingUrl = url
                                 sharedPrefs.edit(commit = true) {
@@ -293,6 +291,7 @@ fun MainScreen() {
                     }
                     NavSection.Settings -> SettingsSection(
                         m3uLink = m3uLink,
+                        onExpandNav = { isNavVisible = true },
                         onSave = { newValue ->
                             m3uLink = newValue
                             sharedPrefs.edit(commit = true) { 
@@ -354,7 +353,7 @@ fun SectionHeader(title: String) {
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun AppLauncherGrid() {
+fun AppLauncherGrid(onExpandNav: () -> Unit) {
     val context = LocalContext.current
     val apps by produceState<List<LaunchableApp>>(initialValue = emptyList()) {
         value = withContext(Dispatchers.IO) {
@@ -395,7 +394,16 @@ fun AppLauncherGrid() {
             items = apps,
             key = { it.packageName }
         ) { app ->
-            AppItem(app) {
+            val index = apps.indexOf(app)
+            AppItem(
+                app = app,
+                modifier = Modifier.onKeyEvent {
+                    if (it.key == Key.DirectionLeft && it.type == KeyEventType.KeyDown && index % 3 == 0) {
+                        onExpandNav()
+                        true
+                    } else false
+                }
+            ) {
                 context.startActivity(app.intent)
             }
         }
@@ -409,14 +417,30 @@ fun TvSection(
     channelsState: Result<List<TvChannel>>?,
     modifier: Modifier = Modifier,
     selectedUrl: String? = null,
+    onExpandNav: () -> Unit = {},
     onChannelClick: (String) -> Unit
 ) {
-    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .onKeyEvent {
+                if (it.key == Key.DirectionLeft && it.type == KeyEventType.KeyDown) {
+                    onExpandNav()
+                    true
+                } else false
+            },
+        contentAlignment = Alignment.Center
+    ) {
         when {
             m3uLink.isEmpty() -> {
-                Box(
-                    modifier = Modifier.focusable(),
-                    contentAlignment = Alignment.Center
+                Surface(
+                    onClick = { /* Could open settings */ },
+                    modifier = Modifier.padding(32.dp),
+                    colors = ClickableSurfaceDefaults.colors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.1f),
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                    ),
+                    shape = ClickableSurfaceDefaults.shape(MaterialTheme.shapes.medium)
                 ) {
                     Text(
                         text = "Please add an M3U link in Settings to start watching TV",
@@ -426,20 +450,37 @@ fun TvSection(
                 }
             }
             channelsState == null -> {
-                Box(
-                    modifier = Modifier.focusable(),
-                    contentAlignment = Alignment.Center
+                Surface(
+                    onClick = { /* Keep focusable */ },
+                    modifier = Modifier.padding(32.dp),
+                    colors = ClickableSurfaceDefaults.colors(
+                        containerColor = Color.Transparent,
+                        focusedContainerColor = Color.Transparent
+                    )
                 ) {
-                    Text("Loading channels...")
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.padding(32.dp)
+                    ) {
+                        CircularProgressIndicator()
+                        Text(
+                            "Loading channels...",
+                            modifier = Modifier.padding(top = 64.dp)
+                        )
+                    }
                 }
             }
             channelsState.isFailure -> {
-                Box(
-                    modifier = Modifier.focusable(),
-                    contentAlignment = Alignment.Center
+                Surface(
+                    onClick = { /* Could retry */ },
+                    modifier = Modifier.padding(32.dp),
+                    colors = ClickableSurfaceDefaults.colors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.1f)
+                    ),
+                    shape = ClickableSurfaceDefaults.shape(MaterialTheme.shapes.medium)
                 ) {
                     Text(
-                        text = "Error: ${channelsState.exceptionOrNull()?.message ?: "Unknown error"}",
+                        text = "Error: ${channelsState.exceptionOrNull()?.message ?: "Unknown error"}\n\nTap to retry or check settings",
                         color = MaterialTheme.colorScheme.error,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.padding(32.dp)
@@ -584,6 +625,7 @@ fun VideoPlayer(
                         m3uLink = m3uLink, 
                         channelsState = channelsState,
                         selectedUrl = url,
+                        onExpandNav = onExpandNav,
                         modifier = Modifier
                             .focusRequester(listFocusRequester)
                             .onFocusChanged {
@@ -593,19 +635,6 @@ fun VideoPlayer(
                                     if (overlayHadFocus) {
                                         showOverlay = false
                                     }
-                                }
-                            }
-                            .onKeyEvent {
-                                if (it.type == KeyEventType.KeyDown) {
-                                    when (it.key) {
-                                        Key.DirectionLeft -> {
-                                            onExpandNav()
-                                            true
-                                        }
-                                        else -> false
-                                    }
-                                } else {
-                                    false
                                 }
                             }
                     ) { newUrl ->
@@ -805,7 +834,7 @@ private fun parseM3U(url: String): List<TvChannel> {
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun SettingsSection(m3uLink: String, onSave: (String) -> Unit) {
+fun SettingsSection(m3uLink: String, onExpandNav: () -> Unit, onSave: (String) -> Unit) {
     var textValue by rememberSaveable { mutableStateOf(m3uLink) }
     val focusRequester = remember { FocusRequester() }
     
@@ -814,10 +843,18 @@ fun SettingsSection(m3uLink: String, onSave: (String) -> Unit) {
         Spacer(modifier = Modifier.height(8.dp))
         Surface(
             onClick = { focusRequester.requestFocus() },
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .onKeyEvent {
+                    if (it.key == Key.DirectionLeft && it.type == KeyEventType.KeyDown) {
+                        onExpandNav()
+                        true
+                    } else false
+                },
             scale = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
             colors = ClickableSurfaceDefaults.colors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f)
             )
         ) {
             BasicTextField(
@@ -858,7 +895,14 @@ fun SettingsSection(m3uLink: String, onSave: (String) -> Unit) {
                     textValue = demoUrl
                     onSave(demoUrl)
                 },
-                modifier = Modifier.padding(end = 16.dp),
+                modifier = Modifier
+                    .padding(end = 16.dp)
+                    .onKeyEvent {
+                        if (it.key == Key.DirectionLeft && it.type == KeyEventType.KeyDown) {
+                            onExpandNav()
+                            true
+                        } else false
+                    },
                 colors = ButtonDefaults.colors(
                     containerColor = MaterialTheme.colorScheme.tertiary,
                     focusedContainerColor = MaterialTheme.colorScheme.tertiaryContainer
@@ -897,10 +941,10 @@ fun SettingsSection(m3uLink: String, onSave: (String) -> Unit) {
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun AppItem(app: LaunchableApp, onClick: () -> Unit) {
+fun AppItem(app: LaunchableApp, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Surface(
         onClick = onClick,
-        modifier = Modifier
+        modifier = modifier
             .padding(12.dp)
             .aspectRatio(16f / 9f),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
