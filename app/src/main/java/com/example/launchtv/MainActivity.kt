@@ -550,7 +550,7 @@ fun VideoPlayer(
 
     val exoPlayer = remember {
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+            .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0")
             .setAllowCrossProtocolRedirects(true)
         
         val mediaSourceFactory = DefaultMediaSourceFactory(context)
@@ -794,7 +794,7 @@ private fun parseM3U(url: String): List<TvChannel> {
     Log.d("LaunchTV", "Starting to parse M3U from: $url")
     try {
         val connection = URL(url).openConnection()
-        connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+        connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0")
         connection.connectTimeout = 15000
         connection.readTimeout = 15000
         
