@@ -1,6 +1,6 @@
 <resources>
     <!-- Gruvbox Dark Theme Base -->
-    <style name="Theme.LaunchTV" parent="Theme.AppCompat.NoActionBar">
+    <style name="Theme.LaunchTV" parent="android:Theme.DeviceDefault.NoActionBar">
         <!-- Gruvbox Dark Background (Bg0_H: #1D2021) -->
         <item name="android:windowBackground">#1D2021</item>
         <!-- Optimization: Disable status bar and navigation bar to save screen real estate and resources on TV -->
