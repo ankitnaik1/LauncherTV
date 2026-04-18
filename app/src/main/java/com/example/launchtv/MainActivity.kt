@@ -613,98 +613,98 @@ fun VideoPlayer(
         modifier = Modifier
             .fillMaxSize()
     ) {
-        Row(modifier = Modifier.fillMaxSize()) {
-            if (showOverlay) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .width(350.dp)
-                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.95f))
-                ) {
-                    TvSection(
-                        m3uLink = m3uLink, 
-                        channelsState = channelsState,
-                        selectedUrl = url,
-                        onExpandNav = onExpandNav,
-                        modifier = Modifier
-                            .focusRequester(listFocusRequester)
-                            .onFocusChanged {
-                                if (it.hasFocus) {
-                                    overlayHadFocus = true
+        // Video player always fills the entire background
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .onKeyEvent { keyEvent ->
+                    if (keyEvent.type == KeyEventType.KeyDown) {
+                        when (keyEvent.key) {
+                            Key.DirectionUp, Key.DirectionDown, Key.DirectionCenter, Key.Enter, Key.DirectionLeft -> {
+                                if (!showOverlay) {
+                                    showOverlay = true
+                                    true
                                 } else {
-                                    if (overlayHadFocus) {
-                                        showOverlay = false
-                                    }
+                                    false
                                 }
                             }
-                    ) { newUrl ->
-                        onChannelSelect(newUrl)
+                            else -> false
+                        }
+                    } else {
+                        false
                     }
                 }
+                .focusRequester(videoFocusRequester)
+                .focusable()
+        ) {
+            AndroidView(
+                factory = {
+                    PlayerView(it).apply {
+                        player = exoPlayer
+                        useController = false
+                        keepScreenOn = true
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+
+            if (isLoading && !showOverlay) {
+                CircularProgressIndicator(
+                    modifier = Modifier.align(Alignment.Center),
+                    color = MaterialTheme.colorScheme.primary
+                )
             }
 
+            if (errorMessage != null && !showOverlay) {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .background(Color.Black.copy(alpha = 0.7f), MaterialTheme.shapes.medium)
+                        .padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = errorMessage!!,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.headlineSmall
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Press UP/DOWN to change channel",
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            }
+        }
+
+        // Overlay is layered on top of the video
+        if (showOverlay) {
             Box(
                 modifier = Modifier
                     .fillMaxHeight()
-                    .weight(1f)
-                    .onKeyEvent { keyEvent ->
-                        if (keyEvent.type == KeyEventType.KeyDown) {
-                            when (keyEvent.key) {
-                                Key.DirectionUp, Key.DirectionDown, Key.DirectionCenter, Key.Enter, Key.DirectionLeft -> {
-                                    if (!showOverlay) {
-                                        showOverlay = true
-                                        true
-                                    } else {
-                                        false
-                                    }
-                                }
-                                else -> false
-                            }
-                        } else {
-                            false
-                        }
-                    }
-                    .focusRequester(videoFocusRequester)
-                    .focusable()
+                    .width(350.dp)
+                    // Set translucent background
+                    .background(Color.Black.copy(alpha = 0.6f))
             ) {
-                AndroidView(
-                    factory = {
-                        PlayerView(it).apply {
-                            player = exoPlayer
-                            useController = false
-                            keepScreenOn = true
+                TvSection(
+                    m3uLink = m3uLink,
+                    channelsState = channelsState,
+                    selectedUrl = url,
+                    onExpandNav = onExpandNav,
+                    modifier = Modifier
+                        .focusRequester(listFocusRequester)
+                        .onFocusChanged {
+                            if (it.hasFocus) {
+                                overlayHadFocus = true
+                            } else {
+                                if (overlayHadFocus) {
+                                    showOverlay = false
+                                }
+                            }
                         }
-                    },
-                    modifier = Modifier.fillMaxSize()
-                )
-
-                if (isLoading && !showOverlay) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.align(Alignment.Center),
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-
-                if (errorMessage != null && !showOverlay) {
-                    Column(
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .background(Color.Black.copy(alpha = 0.7f), MaterialTheme.shapes.medium)
-                            .padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = errorMessage!!,
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.headlineSmall
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Press UP/DOWN to change channel",
-                            color = Color.White,
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
+                ) { newUrl ->
+                    onChannelSelect(newUrl)
                 }
             }
         }
