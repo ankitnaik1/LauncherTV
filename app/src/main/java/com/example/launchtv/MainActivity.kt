@@ -88,6 +88,7 @@ import androidx.tv.material3.Text
 import coil.compose.AsyncImage
 import com.example.launchtv.ui.theme.LaunchTVTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.net.URL
 
@@ -536,10 +537,18 @@ fun VideoPlayer(
     var overlayHadFocus by remember { mutableStateOf(false) }
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var lastInteractionTime by remember { mutableStateOf(System.currentTimeMillis()) }
     
     val videoFocusRequester = remember { FocusRequester() }
     val listFocusRequester = remember { FocusRequester() }
     
+    LaunchedEffect(showOverlay, lastInteractionTime) {
+        if (showOverlay) {
+            delay(3000)
+            showOverlay = false
+        }
+    }
+
     BackHandler {
         if (showOverlay) {
             showOverlay = false
@@ -619,6 +628,7 @@ fun VideoPlayer(
                 .fillMaxSize()
                 .onKeyEvent { keyEvent ->
                     if (keyEvent.type == KeyEventType.KeyDown) {
+                        lastInteractionTime = System.currentTimeMillis()
                         when (keyEvent.key) {
                             Key.DirectionUp, Key.DirectionDown, Key.DirectionCenter, Key.Enter, Key.DirectionLeft -> {
                                 if (!showOverlay) {
@@ -683,9 +693,13 @@ fun VideoPlayer(
             Box(
                 modifier = Modifier
                     .fillMaxHeight()
-                    .width(350.dp)
+                    .width(280.dp)
                     // Set translucent background
                     .background(Color.Black.copy(alpha = 0.6f))
+                    .onKeyEvent { 
+                        lastInteractionTime = System.currentTimeMillis()
+                        false 
+                    }
             ) {
                 TvSection(
                     m3uLink = m3uLink,
@@ -733,9 +747,9 @@ fun ChannelItem(channel: TvChannel, isSelected: Boolean = false, onClick: () -> 
         onClick = onClick,
         selected = isSelected,
         modifier = Modifier
-            .padding(vertical = 4.dp, horizontal = 12.dp)
+            .padding(vertical = 2.dp, horizontal = 8.dp)
             .fillMaxWidth()
-            .height(80.dp),
+            .height(60.dp),
         scale = SelectableSurfaceDefaults.scale(focusedScale = 1.05f),
         colors = SelectableSurfaceDefaults.colors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
@@ -758,15 +772,15 @@ fun ChannelItem(channel: TvChannel, isSelected: Boolean = false, onClick: () -> 
                     model = channel.logoUrl,
                     contentDescription = null,
                     modifier = Modifier
-                        .size(56.dp)
-                        .padding(end = 16.dp),
+                        .size(40.dp)
+                        .padding(end = 12.dp),
                     contentScale = ContentScale.Fit
                 )
             } else {
                 Box(
                     modifier = Modifier
-                        .size(56.dp)
-                        .padding(end = 16.dp),
+                        .size(40.dp)
+                        .padding(end = 12.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text("TV", style = MaterialTheme.typography.labelSmall)
