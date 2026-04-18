@@ -69,6 +69,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.edit
 import androidx.core.graphics.drawable.toBitmap
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
@@ -76,7 +77,13 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.exoplayer.source.MediaSource
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
+import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import androidx.media3.ui.PlayerView
 import androidx.tv.material3.Button
 import androidx.tv.material3.ButtonDefaults
@@ -586,13 +593,25 @@ fun VideoPlayer(
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
             .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0")
             .setAllowCrossProtocolRedirects(true)
+            .setDefaultRequestProperties(mapOf(
+                "Accept" to "*/*",
+                "Connection" to "keep-alive"
+            ))
         
-        val mediaSourceFactory = DefaultMediaSourceFactory(context)
+        // Optimize extractors for IPTV (especially TS streams)
+        val extractorsFactory = DefaultExtractorsFactory()
+            .setTsExtractorFlags(DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES or 
+                                 DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS)
+
+        val mediaSourceFactory = DefaultMediaSourceFactory(context, extractorsFactory)
             .setDataSourceFactory(httpDataSourceFactory)
+            .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(3)) // Retry up to 3 times
 
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaSourceFactory)
+            .setAudioAttributes(AudioAttributes.DEFAULT, true)
             .build().apply {
+                val player = this
                 playWhenReady = true
                 addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(state: Int) {
@@ -603,12 +622,33 @@ fun VideoPlayer(
                     }
 
                     override fun onPlayerError(error: PlaybackException) {
-                        Log.e("LaunchTV", "ExoPlayer Error: ${error.message}", error)
+                        Log.e("LaunchTV", "ExoPlayer Error: ${error.message} (Code: ${error.errorCode})", error)
+                        
+                        // Retry logic for UnrecognizedInputFormatException
+                        if (error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED ||
+                            error.errorCode == PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED) {
+                            
+                            val currentMediaItem = player.currentMediaItem
+                            
+                            if (currentMediaItem?.localConfiguration?.mimeType != MimeTypes.APPLICATION_M3U8) {
+                                Log.d("LaunchTV", "Retrying with HLS MIME type...")
+                                val retryMediaItem = MediaItem.Builder()
+                                    .setUri(url)
+                                    .setMimeType(MimeTypes.APPLICATION_M3U8)
+                                    .build()
+                                player.setMediaItem(retryMediaItem)
+                                player.prepare()
+                                return
+                            }
+                        }
+
                         isLoading = false
                         errorMessage = when (error.errorCode) {
                             PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED -> "Network Connection Error"
                             PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS -> "Source blocked or 404"
                             PlaybackException.ERROR_CODE_DECODER_INIT_FAILED -> "Unsupported Video Format"
+                            PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
+                            PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED -> "Invalid Stream Format"
                             else -> "Cannot play this channel"
                         }
                     }
@@ -620,20 +660,52 @@ fun VideoPlayer(
         errorMessage = null
         isLoading = true
         
-        val mediaItem = MediaItem.Builder()
-            .setUri(url)
-            .setMimeType(
-                if (url.contains("m3u8", ignoreCase = true)) {
-                    MimeTypes.APPLICATION_M3U8
-                } else if (url.contains(".ts", ignoreCase = true)) {
-                    "video/mp2t"
-                } else {
-                    null
-                }
-            )
-            .build()
+        // Very aggressive MIME type detection to handle IPTV redirectors
+        val isHls = url.contains("m3u8", ignoreCase = true) || 
+                    url.contains("/live/") || url.contains("/stream/") || 
+                    url.contains("get.php") || url.contains("playlist") ||
+                    !url.contains(".")
+                    
+        val isTs = url.contains(".ts", ignoreCase = true)
+
+        val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+            .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
+            .setAllowCrossProtocolRedirects(true)
+            .setDefaultRequestProperties(mapOf(
+                "Accept" to "*/*",
+                "Connection" to "keep-alive"
+            ))
+
+        val extractorsFactory = DefaultExtractorsFactory()
+            .setTsExtractorFlags(DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES or 
+                                 DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS)
+
+        val mediaSource: MediaSource = when {
+            isHls -> {
+                HlsMediaSource.Factory(httpDataSourceFactory)
+                    .setAllowChunklessPreparation(true)
+                    .createMediaSource(MediaItem.Builder()
+                        .setUri(url)
+                        .setMimeType(MimeTypes.APPLICATION_M3U8)
+                        .build())
+            }
+            isTs -> {
+                ProgressiveMediaSource.Factory(httpDataSourceFactory, extractorsFactory)
+                    .createMediaSource(MediaItem.Builder()
+                        .setUri(url)
+                        .setMimeType(MimeTypes.VIDEO_MP2T)
+                        .build())
+            }
+            else -> {
+                DefaultMediaSourceFactory(context, extractorsFactory)
+                    .setDataSourceFactory(httpDataSourceFactory)
+                    .createMediaSource(MediaItem.Builder()
+                        .setUri(url)
+                        .build())
+            }
+        }
             
-        exoPlayer.setMediaItem(mediaItem)
+        exoPlayer.setMediaSource(mediaSource)
         exoPlayer.prepare()
     }
 
@@ -866,11 +938,14 @@ private fun parseM3U(url: String): List<TvChannel> {
                     }
                 } else if (trimmedLine.isNotEmpty() && !trimmedLine.startsWith("#")) {
                     if (currentName.isNotEmpty()) {
-                        channels.add(TvChannel(currentName, trimmedLine, currentLogo.ifEmpty { null }))
+                        // Strip IPTV headers like |User-Agent=... or |Referer=...
+                        val cleanUrl = trimmedLine.substringBefore("|").trim()
+                        channels.add(TvChannel(currentName, cleanUrl, currentLogo.ifEmpty { null }))
                         currentName = ""
                         currentLogo = ""
                     } else if (trimmedLine.startsWith("http")) {
-                        channels.add(TvChannel("Unnamed Channel", trimmedLine))
+                        val cleanUrl = trimmedLine.substringBefore("|").trim()
+                        channels.add(TvChannel("Unnamed Channel", cleanUrl))
                     }
                 }
             }
