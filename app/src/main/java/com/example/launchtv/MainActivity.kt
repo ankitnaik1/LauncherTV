@@ -926,11 +926,22 @@ fun ChannelListOverlay(
     Box(
         modifier = Modifier
             .fillMaxHeight()
-            .width(320.dp)
-            .background(AppleGlass)
+            .width(350.dp)
+            .background(
+                Brush.horizontalGradient(
+                    colors = listOf(
+                        Color.Black.copy(alpha = 0.8f),
+                        Color.Black.copy(alpha = 0.4f),
+                        Color.Transparent
+                    )
+                )
+            )
             .onKeyEvent { 
                 onInteraction()
-                false 
+                if (it.key == Key.DirectionRight && it.type == KeyEventType.KeyDown) {
+                    onDismiss()
+                    true
+                } else false
             }
     ) {
         TvSection(
@@ -960,59 +971,77 @@ fun ChannelItem(
     isSelected: Boolean = false, 
     onClick: () -> Unit
 ) {
+    var isFocused by remember { mutableStateOf(false) }
+    
+    // Pre-calculate gradient to avoid object creation during draw
+    val focusGradient = remember {
+        Brush.horizontalGradient(
+            colors = listOf(
+                Color.White,
+                Color.White.copy(alpha = 0.5f)
+            )
+        )
+    }
+
     Surface(
         onClick = onClick,
         selected = isSelected,
         modifier = modifier
             .padding(vertical = 4.dp, horizontal = 8.dp)
             .fillMaxWidth()
-            .height(64.dp),
-        scale = SelectableSurfaceDefaults.scale(focusedScale = 1.05f),
+            .height(64.dp)
+            .onFocusChanged { isFocused = it.isFocused },
+        scale = SelectableSurfaceDefaults.scale(focusedScale = 1.04f), // Slightly reduced scale for stability
         colors = SelectableSurfaceDefaults.colors(
             containerColor = Color.Transparent,
-            contentColor = Color.White.copy(alpha = 0.7f),
-            focusedContainerColor = Color.White,
+            contentColor = if (isFocused) Color.Black else Color.White.copy(alpha = 0.7f),
+            focusedContainerColor = Color.Transparent,
             focusedContentColor = Color.Black,
-            selectedContainerColor = Color.White.copy(alpha = 0.15f),
+            selectedContainerColor = Color.White.copy(alpha = 0.1f),
             selectedContentColor = Color.White,
-            focusedSelectedContainerColor = Color.White,
+            focusedSelectedContainerColor = Color.Transparent,
             focusedSelectedContentColor = Color.Black
         ),
         shape = SelectableSurfaceDefaults.shape(RoundedCornerShape(12.dp))
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+        Box(
+            modifier = if (isFocused) Modifier.background(focusGradient) else Modifier
         ) {
-            if (!channel.logoUrl.isNullOrEmpty()) {
-                AsyncImage(
-                    model = channel.logoUrl,
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(Color.White.copy(alpha = 0.1f))
-                        .padding(4.dp),
-                    contentScale = ContentScale.Fit
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(Color.White.copy(alpha = 0.1f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("TV", style = MaterialTheme.typography.labelSmall, color = Color.White)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                if (!channel.logoUrl.isNullOrEmpty()) {
+                    AsyncImage(
+                        model = channel.logoUrl,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color.White.copy(alpha = 0.1f)),
+                        contentScale = ContentScale.Fit
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color.White.copy(alpha = 0.1f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("TV", style = MaterialTheme.typography.labelSmall, color = Color.White)
+                    }
                 }
+                Spacer(modifier = Modifier.width(16.dp))
+                Text(
+                    text = channel.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
-            Spacer(modifier = Modifier.width(16.dp))
-            Text(
-                text = channel.name,
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
         }
     }
 }
