@@ -565,6 +565,24 @@ fun VideoPlayer(
     var lastInteractionTime by remember { mutableStateOf(System.currentTimeMillis()) }
     
     val videoFocusRequester = remember { FocusRequester() }
+
+    // Parse URL and headers (IPTV standard uses | to separate headers)
+    val (baseUri, headers) = remember(url) {
+        val parts = url.split("|")
+        val base = parts[0].trim()
+        val h = mutableMapOf<String, String>()
+        parts.drop(1).forEach { part ->
+            val kv = part.split("=", limit = 2)
+            if (kv.size == 2) {
+                h[kv[0].trim()] = kv[1].trim()
+            }
+        }
+        base to h
+    }
+
+    // Use a ref to access latest URL info in the player listener without recreating it
+    val urlInfoRef = remember { mutableStateOf(baseUri to headers) }
+    urlInfoRef.value = baseUri to headers
     
     LaunchedEffect(showOverlay, lastInteractionTime) {
         if (showOverlay) {
@@ -632,8 +650,9 @@ fun VideoPlayer(
                             
                             if (currentMediaItem?.localConfiguration?.mimeType != MimeTypes.APPLICATION_M3U8) {
                                 Log.d("LaunchTV", "Retrying with HLS MIME type...")
+                                val (retryBaseUri, _) = urlInfoRef.value
                                 val retryMediaItem = MediaItem.Builder()
-                                    .setUri(url)
+                                    .setUri(retryBaseUri)
                                     .setMimeType(MimeTypes.APPLICATION_M3U8)
                                     .build()
                                 player.setMediaItem(retryMediaItem)
@@ -661,20 +680,20 @@ fun VideoPlayer(
         isLoading = true
         
         // Very aggressive MIME type detection to handle IPTV redirectors
-        val isHls = url.contains("m3u8", ignoreCase = true) || 
-                    url.contains("/live/") || url.contains("/stream/") || 
-                    url.contains("get.php") || url.contains("playlist") ||
-                    !url.contains(".")
+        val isHls = baseUri.contains("m3u8", ignoreCase = true) || 
+                    baseUri.contains("/live/") || baseUri.contains("/stream/") || 
+                    baseUri.contains("get.php") || baseUri.contains("playlist") ||
+                    !baseUri.contains(".")
                     
-        val isTs = url.contains(".ts", ignoreCase = true)
+        val isTs = baseUri.contains(".ts", ignoreCase = true)
 
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
+            .setUserAgent(headers["User-Agent"] ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
             .setAllowCrossProtocolRedirects(true)
             .setDefaultRequestProperties(mapOf(
                 "Accept" to "*/*",
                 "Connection" to "keep-alive"
-            ))
+            ) + headers.filterKeys { !it.equals("User-Agent", ignoreCase = true) })
 
         val extractorsFactory = DefaultExtractorsFactory()
             .setTsExtractorFlags(DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES or 
@@ -685,14 +704,14 @@ fun VideoPlayer(
                 HlsMediaSource.Factory(httpDataSourceFactory)
                     .setAllowChunklessPreparation(true)
                     .createMediaSource(MediaItem.Builder()
-                        .setUri(url)
+                        .setUri(baseUri)
                         .setMimeType(MimeTypes.APPLICATION_M3U8)
                         .build())
             }
             isTs -> {
                 ProgressiveMediaSource.Factory(httpDataSourceFactory, extractorsFactory)
                     .createMediaSource(MediaItem.Builder()
-                        .setUri(url)
+                        .setUri(baseUri)
                         .setMimeType(MimeTypes.VIDEO_MP2T)
                         .build())
             }
@@ -700,7 +719,7 @@ fun VideoPlayer(
                 DefaultMediaSourceFactory(context, extractorsFactory)
                     .setDataSourceFactory(httpDataSourceFactory)
                     .createMediaSource(MediaItem.Builder()
-                        .setUri(url)
+                        .setUri(baseUri)
                         .build())
             }
         }
@@ -938,14 +957,11 @@ private fun parseM3U(url: String): List<TvChannel> {
                     }
                 } else if (trimmedLine.isNotEmpty() && !trimmedLine.startsWith("#")) {
                     if (currentName.isNotEmpty()) {
-                        // Strip IPTV headers like |User-Agent=... or |Referer=...
-                        val cleanUrl = trimmedLine.substringBefore("|").trim()
-                        channels.add(TvChannel(currentName, cleanUrl, currentLogo.ifEmpty { null }))
+                        channels.add(TvChannel(currentName, trimmedLine, currentLogo.ifEmpty { null }))
                         currentName = ""
                         currentLogo = ""
                     } else if (trimmedLine.startsWith("http")) {
-                        val cleanUrl = trimmedLine.substringBefore("|").trim()
-                        channels.add(TvChannel("Unnamed Channel", cleanUrl))
+                        channels.add(TvChannel("Unnamed Channel", trimmedLine))
                     }
                 }
             }
