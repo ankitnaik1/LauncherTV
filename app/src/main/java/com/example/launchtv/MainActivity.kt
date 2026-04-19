@@ -2,6 +2,8 @@ package com.example.launchtv
 
 import android.content.Context
 import android.content.Intent
+import android.app.Activity
+import android.view.WindowManager
 import android.net.Uri
 import android.util.Log
 import android.os.Bundle
@@ -56,6 +58,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -240,7 +243,12 @@ fun MainScreen() {
     LaunchedEffect(isNavVisible, selectedSection) {
         if (isNavVisible) {
             navHadFocus = false
-            navFocusRequester.requestFocus()
+            delay(50) // Short delay to ensure menu is composed before requesting focus
+            try {
+                navFocusRequester.requestFocus()
+            } catch (e: Exception) {
+                Log.e("LaunchTV", "Failed to focus nav", e)
+            }
         } else {
             navHadFocus = false
             try {
@@ -269,6 +277,9 @@ fun MainScreen() {
                     .fillMaxHeight()
                     .width(280.dp)
                     .background(AppleGlass) // Use translucency
+                    .onFocusChanged {
+                        if (it.hasFocus) navHadFocus = true
+                    }
                     .padding(top = 48.dp, start = 32.dp, end = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
@@ -287,7 +298,14 @@ fun MainScreen() {
                         onSelect = {
                             selectedSection = section
                         },
-                        modifier = if (selectedSection == section) Modifier.focusRequester(navFocusRequester) else Modifier
+                        modifier = (if (selectedSection == section) Modifier.focusRequester(navFocusRequester) else Modifier)
+                            .onKeyEvent {
+                                if (it.key == Key.DirectionRight && it.type == KeyEventType.KeyDown) {
+                                    selectedSection = section
+                                    isNavVisible = false
+                                    true
+                                } else false
+                            }
                     )
                 }
             }
@@ -301,8 +319,9 @@ fun MainScreen() {
                 .weight(1f)
                 .focusRequester(contentFocusRequester)
                 .onFocusChanged {
-                    if (it.hasFocus && isNavVisible) {
+                    if (it.hasFocus && isNavVisible && navHadFocus) {
                         isNavVisible = false
+                        navHadFocus = false
                     }
                 }
                 .padding(
@@ -585,6 +604,16 @@ fun VideoPlayer(
     isNavVisible: Boolean = false
 ) {
     val context = LocalContext.current
+    
+    // Keep screen on while video player is active
+    DisposableEffect(Unit) {
+        val window = (context as? Activity)?.window
+        window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
     var showOverlay by remember { mutableStateOf(false) }
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -1075,7 +1104,7 @@ fun SettingsSection(m3uLink: String, onExpandNav: () -> Unit, onSave: (String) -
             onClick = { focusRequester.requestFocus() },
             modifier = Modifier
                 .fillMaxWidth()
-                .onKeyEvent {
+                .onPreviewKeyEvent {
                     if (it.key == Key.DirectionLeft && it.type == KeyEventType.KeyDown) {
                         onExpandNav()
                         true
@@ -1122,19 +1151,24 @@ fun SettingsSection(m3uLink: String, onExpandNav: () -> Unit, onSave: (String) -
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            SettingsButton("Load Offline Demo", onExpandNav) { 
+            SettingsButton("Load Offline Demo", modifier = Modifier.onKeyEvent {
+                if (it.key == Key.DirectionLeft && it.type == KeyEventType.KeyDown) {
+                    onExpandNav()
+                    true
+                } else false
+            }) { 
                 val demoUrl = "internal://demo"
                 textValue = demoUrl
                 onSave(demoUrl)
             }
 
-            SettingsButton("Load Sample URL", onExpandNav) { 
+            SettingsButton("Load Sample URL") { 
                 val sampleUrl = "https://raw.githubusercontent.com/ankitnaik1/Dot_Files/main/channels.m3u"
                 textValue = sampleUrl
                 onSave(sampleUrl)
             }
 
-            SettingsButton("Save and Load", onExpandNav, isPrimary = true) { 
+            SettingsButton("Save and Load", isPrimary = true) { 
                 onSave(textValue) 
             }
         }
@@ -1145,18 +1179,13 @@ fun SettingsSection(m3uLink: String, onExpandNav: () -> Unit, onSave: (String) -
 @Composable
 fun SettingsButton(
     text: String, 
-    onExpandNav: () -> Unit, 
+    modifier: Modifier = Modifier,
     isPrimary: Boolean = false,
     onClick: () -> Unit
 ) {
     Button(
         onClick = onClick,
-        modifier = Modifier.onKeyEvent {
-            if (it.key == Key.DirectionLeft && it.type == KeyEventType.KeyDown) {
-                onExpandNav()
-                true
-            } else false
-        },
+        modifier = modifier,
         colors = ButtonDefaults.colors(
             containerColor = if (isPrimary) Color.White.copy(alpha = 0.2f) else AppleLightGray,
             focusedContainerColor = Color.White,
