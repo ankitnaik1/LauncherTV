@@ -1,6 +1,7 @@
 package com.example.launchtv.ui.theme
 
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Color
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.darkColorScheme
@@ -10,32 +11,30 @@ import androidx.tv.material3.darkColorScheme
 fun LaunchTVTheme(
     content: @Composable () -> Unit,
 ) {
-    // Gruvbox Dark Color Scheme optimized for Fire TV Stick (non-4K)
-    // Using high contrast colors for better visibility on lower resolution screens
-    val gruvboxColorScheme = darkColorScheme(
-        primary = GruvboxOrange, // Primary action color
-        onPrimary = GruvboxBg0_H,
-        primaryContainer = GruvboxBg1,
-        onPrimaryContainer = GruvboxOrange,
-        secondary = GruvboxGreen,
-        onSecondary = GruvboxBg0_H,
-        secondaryContainer = GruvboxBg2,
-        onSecondaryContainer = GruvboxGreen,
-        tertiary = GruvboxYellow,
-        onTertiary = GruvboxBg0_H,
-        background = GruvboxBg0_H,
-        onBackground = GruvboxFg,
-        surface = GruvboxBg,
-        onSurface = GruvboxFg,
-        surfaceVariant = GruvboxBg1,
-        onSurfaceVariant = GruvboxFg,
-        error = GruvboxRed,
-        onError = GruvboxBg0_H
-        // Removed outline as it's not in TV M3 darkColorScheme
+    // Apple TV OS inspired Dark Color Scheme
+    val appleColorScheme = darkColorScheme(
+        primary = Color.White, // Apple's focus is usually pure white/brightest
+        onPrimary = Color.Black,
+        primaryContainer = AppleGray,
+        onPrimaryContainer = Color.White,
+        secondary = AppleLightGray,
+        onSecondary = Color.White,
+        secondaryContainer = AppleSurface,
+        onSecondaryContainer = Color.White,
+        tertiary = Color(0xFF007AFF), // Apple Blue for accent
+        onTertiary = Color.White,
+        background = AppleDarkBg,
+        onBackground = Color.White,
+        surface = AppleGray,
+        onSurface = Color.White,
+        surfaceVariant = AppleLightGray,
+        onSurfaceVariant = Color.White,
+        error = Color(0xFFFF453A), // Apple System Red
+        onError = Color.White
     )
 
     MaterialTheme(
-        colorScheme = gruvboxColorScheme,
+        colorScheme = appleColorScheme,
         typography = Typography,
         content = content
     )

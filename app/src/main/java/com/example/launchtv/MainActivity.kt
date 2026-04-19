@@ -34,7 +34,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -94,7 +93,18 @@ import androidx.tv.material3.SelectableSurfaceDefaults
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import coil.compose.AsyncImage
-import com.example.launchtv.ui.theme.LaunchTVTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.draw.rotate
+import com.example.launchtv.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -155,6 +165,37 @@ fun MainScreen() {
     val navFocusRequester = remember { FocusRequester() }
     val contentFocusRequester = remember { FocusRequester() }
 
+    // Cache apps at MainScreen level for instant switching
+    val apps by produceState<List<LaunchableApp>>(initialValue = emptyList()) {
+        value = withContext(Dispatchers.IO) {
+            val pm = context.packageManager
+            val intent = Intent(Intent.ACTION_MAIN, null).apply {
+                addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER)
+            }
+            pm.queryIntentActivities(intent, 0).mapNotNull { resolveInfo ->
+                val packageName = resolveInfo.activityInfo.packageName
+                if (packageName == context.packageName) return@mapNotNull null
+                
+                val launchIntent = pm.getLeanbackLaunchIntentForPackage(packageName)
+                    ?: pm.getLaunchIntentForPackage(packageName)
+                
+                if (launchIntent != null) {
+                    val banner = try { resolveInfo.activityInfo.loadBanner(pm) } catch (e: Exception) { null }
+                    val drawable = banner ?: resolveInfo.loadIcon(pm)
+                    
+                    LaunchableApp(
+                        name = resolveInfo.loadLabel(pm).toString(),
+                        packageName = packageName,
+                        icon = drawable.toBitmap().asImageBitmap(),
+                        intent = launchIntent
+                    )
+                } else {
+                    null
+                }
+            }.sortedBy { it.name }
+        }
+    }
+
     if (isNavVisible) {
         BackHandler {
             isNavVisible = false
@@ -163,17 +204,25 @@ fun MainScreen() {
 
     val channelsState by produceState<Result<List<TvChannel>>?>(initialValue = null, key1 = m3uLink) {
         if (m3uLink.isNotEmpty()) {
-            value = null // Set to loading
+            // Try loading from cache first for instant UI
+            val cached = withContext(Dispatchers.IO) { getCachedM3U(context, m3uLink) }
+            if (cached != null) {
+                value = Result.success(cached)
+                Log.d("LaunchTV", "Loaded ${cached.size} channels from cache")
+            }
+            
+            // Still fetch in background to refresh if cache was old or to initially load
             value = withContext(Dispatchers.IO) {
                 try {
                     val result = parseM3U(m3uLink)
                     if (result.isEmpty()) {
-                        Result.failure(Exception("No channels found in playlist"))
+                        if (value?.isSuccess == true) value else Result.failure(Exception("No channels found in playlist"))
                     } else {
+                        saveCachedM3U(context, m3uLink, result)
                         Result.success(result)
                     }
                 } catch (e: Exception) {
-                    Result.failure(e)
+                    value ?: Result.failure(e)
                 }
             }
         }
@@ -218,15 +267,17 @@ fun MainScreen() {
             Column(
                 modifier = Modifier
                     .fillMaxHeight()
-                    .width(240.dp)
-                    .padding(top = 32.dp, start = 32.dp, end = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                    .width(280.dp)
+                    .background(AppleGlass) // Use translucency
+                    .padding(top = 48.dp, start = 32.dp, end = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
                     text = "LaunchTV",
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(bottom = 32.dp, start = 16.dp)
+                    style = MaterialTheme.typography.headlineLarge,
+                    fontWeight = FontWeight.ExtraBold,
+                    modifier = Modifier.padding(bottom = 40.dp, start = 16.dp),
+                    color = Color.White
                 )
 
                 NavSection.entries.forEach { section ->
@@ -266,7 +317,7 @@ fun MainScreen() {
                     SectionHeader(selectedSection.name)
                 }
                 when (selectedSection) {
-                    NavSection.Apps -> AppLauncherGrid(onExpandNav = { isNavVisible = true })
+                    NavSection.Apps -> AppLauncherGrid(apps = apps, onExpandNav = { isNavVisible = true })
                     NavSection.TV -> {
                         if (playingUrl != null) {
                             VideoPlayer(
@@ -326,23 +377,23 @@ fun NavigationItem(
     Surface(
         selected = isSelected,
         onClick = onSelect,
-        scale = SelectableSurfaceDefaults.scale(focusedScale = 1.05f),
+        scale = SelectableSurfaceDefaults.scale(focusedScale = 1.1f),
         colors = SelectableSurfaceDefaults.colors(
             containerColor = Color.Transparent,
-            contentColor = MaterialTheme.colorScheme.onSurface,
-            focusedContainerColor = MaterialTheme.colorScheme.primary,
-            focusedContentColor = MaterialTheme.colorScheme.onPrimary,
-            selectedContainerColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.2f),
-            selectedContentColor = MaterialTheme.colorScheme.secondary,
-            focusedSelectedContainerColor = MaterialTheme.colorScheme.primary,
-            focusedSelectedContentColor = MaterialTheme.colorScheme.onPrimary
+            contentColor = Color.White.copy(alpha = 0.6f),
+            focusedContainerColor = Color.White,
+            focusedContentColor = Color.Black,
+            selectedContainerColor = Color.White.copy(alpha = 0.15f),
+            selectedContentColor = Color.White,
+            focusedSelectedContainerColor = Color.White,
+            focusedSelectedContentColor = Color.Black
         ),
         modifier = modifier.fillMaxWidth(),
-        shape = SelectableSurfaceDefaults.shape(MaterialTheme.shapes.small)
+        shape = SelectableSurfaceDefaults.shape(RoundedCornerShape(12.dp))
     ) {
         Text(
             text = section.name,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
         )
@@ -354,49 +405,23 @@ fun NavigationItem(
 fun SectionHeader(title: String) {
     Text(
         text = title,
-        style = MaterialTheme.typography.displaySmall,
-        fontWeight = FontWeight.Bold,
-        modifier = Modifier.padding(bottom = 24.dp)
+        style = MaterialTheme.typography.headlineLarge,
+        fontWeight = FontWeight.ExtraBold,
+        modifier = Modifier.padding(bottom = 32.dp),
+        color = Color.White
     )
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun AppLauncherGrid(onExpandNav: () -> Unit) {
+fun AppLauncherGrid(apps: List<LaunchableApp>, onExpandNav: () -> Unit) {
     val context = LocalContext.current
-    val apps by produceState<List<LaunchableApp>>(initialValue = emptyList()) {
-        value = withContext(Dispatchers.IO) {
-            val pm = context.packageManager
-            val intent = Intent(Intent.ACTION_MAIN, null).apply {
-                addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER)
-            }
-            pm.queryIntentActivities(intent, 0).mapNotNull { resolveInfo ->
-                val packageName = resolveInfo.activityInfo.packageName
-                if (packageName == context.packageName) return@mapNotNull null
-                
-                val launchIntent = pm.getLeanbackLaunchIntentForPackage(packageName)
-                    ?: pm.getLaunchIntentForPackage(packageName)
-                
-                if (launchIntent != null) {
-                    val banner = try { resolveInfo.activityInfo.loadBanner(pm) } catch (e: Exception) { null }
-                    val drawable = banner ?: resolveInfo.loadIcon(pm)
-                    
-                    LaunchableApp(
-                        name = resolveInfo.loadLabel(pm).toString(),
-                        packageName = packageName,
-                        icon = drawable.toBitmap().asImageBitmap(),
-                        intent = launchIntent
-                    )
-                } else {
-                    null
-                }
-            }.sortedBy { it.name }
-        }
-    }
 
     LazyVerticalGrid(
-        columns = GridCells.Fixed(3),
+        columns = GridCells.Fixed(4), // 4 columns looks more like Apple TV
         contentPadding = PaddingValues(bottom = 64.dp, top = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(24.dp),
+        verticalArrangement = Arrangement.spacedBy(32.dp),
         modifier = Modifier.fillMaxSize()
     ) {
         items(
@@ -407,7 +432,7 @@ fun AppLauncherGrid(onExpandNav: () -> Unit) {
             AppItem(
                 app = app,
                 modifier = Modifier.onKeyEvent {
-                    if (it.key == Key.DirectionLeft && it.type == KeyEventType.KeyDown && index % 3 == 0) {
+                    if (it.key == Key.DirectionLeft && it.type == KeyEventType.KeyDown && index % 4 == 0) {
                         onExpandNav()
                         true
                     } else false
@@ -495,10 +520,11 @@ fun TvSection(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier.padding(32.dp)
                     ) {
-                        CircularProgressIndicator()
+                        AppleLoadingIndicator()
                         Text(
                             "Loading channels...",
-                            modifier = Modifier.padding(top = 64.dp)
+                            modifier = Modifier.padding(top = 84.dp),
+                            color = Color.White.copy(alpha = 0.5f)
                         )
                     }
                 }
@@ -744,10 +770,7 @@ fun VideoPlayer(
         }, focusRequester = videoFocusRequester)
 
         if (isLoading && !showOverlay) {
-            CircularProgressIndicator(
-                modifier = Modifier.align(Alignment.Center),
-                color = MaterialTheme.colorScheme.primary
-            )
+            AppleLoadingIndicator(modifier = Modifier.align(Alignment.Center))
         }
 
         if (errorMessage != null && !showOverlay) {
@@ -802,23 +825,58 @@ fun VideoSurface(
 }
 
 @Composable
+fun AppleLoadingIndicator(modifier: Modifier = Modifier) {
+    val infiniteTransition = rememberInfiniteTransition(label = "loading")
+    val angle by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "rotation"
+    )
+    
+    Box(
+        modifier = modifier
+            .size(40.dp)
+            .rotate(angle),
+        contentAlignment = Alignment.Center
+    ) {
+        for (i in 0 until 8) {
+            Box(
+                modifier = Modifier
+                    .rotate(i * 45f)
+                    .align(Alignment.TopCenter)
+                    .width(3.dp)
+                    .height(10.dp)
+                    .background(
+                        Color.White.copy(alpha = (i + 1) / 8f),
+                        RoundedCornerShape(2.dp)
+                    )
+            )
+        }
+    }
+}
+
+@Composable
 fun PlaybackErrorDisplay(message: String, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
-            .background(Color.Black.copy(alpha = 0.7f), MaterialTheme.shapes.medium)
-            .padding(24.dp),
+            .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(16.dp))
+            .padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
             text = message,
-            color = MaterialTheme.colorScheme.error,
-            style = MaterialTheme.typography.bodyLarge
+            color = Color.White,
+            style = MaterialTheme.typography.headlineSmall
         )
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(16.dp))
         Text(
             text = "Press UP/DOWN to change channel",
-            color = Color.White.copy(alpha = 0.7f),
-            style = MaterialTheme.typography.bodySmall
+            color = Color.White.copy(alpha = 0.6f),
+            style = MaterialTheme.typography.bodyMedium
         )
     }
 }
@@ -839,8 +897,8 @@ fun ChannelListOverlay(
     Box(
         modifier = Modifier
             .fillMaxHeight()
-            .width(280.dp)
-            .background(Color.Black.copy(alpha = 0.6f))
+            .width(320.dp)
+            .background(AppleGlass)
             .onKeyEvent { 
                 onInteraction()
                 false 
@@ -877,51 +935,80 @@ fun ChannelItem(
         onClick = onClick,
         selected = isSelected,
         modifier = modifier
-            .padding(vertical = 1.dp, horizontal = 4.dp)
+            .padding(vertical = 4.dp, horizontal = 8.dp)
             .fillMaxWidth()
-            .height(56.dp),
-        scale = SelectableSurfaceDefaults.scale(focusedScale = 1.0f), // Disabled scale animation for performance
+            .height(64.dp),
+        scale = SelectableSurfaceDefaults.scale(focusedScale = 1.05f),
         colors = SelectableSurfaceDefaults.colors(
             containerColor = Color.Transparent,
-            contentColor = Color.White.copy(alpha = 0.8f),
-            focusedContainerColor = MaterialTheme.colorScheme.primary,
-            focusedContentColor = MaterialTheme.colorScheme.onPrimary,
-            selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
-            selectedContentColor = MaterialTheme.colorScheme.primary
+            contentColor = Color.White.copy(alpha = 0.7f),
+            focusedContainerColor = Color.White,
+            focusedContentColor = Color.Black,
+            selectedContainerColor = Color.White.copy(alpha = 0.15f),
+            selectedContentColor = Color.White,
+            focusedSelectedContainerColor = Color.White,
+            focusedSelectedContentColor = Color.Black
         ),
-        shape = SelectableSurfaceDefaults.shape(MaterialTheme.shapes.extraSmall)
+        shape = SelectableSurfaceDefaults.shape(RoundedCornerShape(12.dp))
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
             if (!channel.logoUrl.isNullOrEmpty()) {
                 AsyncImage(
                     model = channel.logoUrl,
                     contentDescription = null,
                     modifier = Modifier
-                        .size(36.dp)
-                        .padding(end = 12.dp),
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color.White.copy(alpha = 0.1f))
+                        .padding(4.dp),
                     contentScale = ContentScale.Fit
                 )
             } else {
                 Box(
                     modifier = Modifier
-                        .size(36.dp)
-                        .padding(end = 12.dp),
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color.White.copy(alpha = 0.1f)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("TV", style = MaterialTheme.typography.labelSmall)
+                    Text("TV", style = MaterialTheme.typography.labelSmall, color = Color.White)
                 }
             }
+            Spacer(modifier = Modifier.width(16.dp))
             Text(
                 text = channel.name,
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.titleMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
         }
     }
+}
+
+private fun getCachedM3U(context: Context, url: String): List<TvChannel>? {
+    val sharedPrefs = context.getSharedPreferences("M3UCache", Context.MODE_PRIVATE)
+    val cachedUrl = sharedPrefs.getString("cached_url", null)
+    if (cachedUrl == url) {
+        val data = sharedPrefs.getString("cached_data", null)
+        if (data != null) {
+            return data.lines().filter { it.isNotBlank() }.mapNotNull { line ->
+                val parts = line.split("|")
+                if (parts.size >= 2) {
+                    TvChannel(parts[0], parts[1], parts.getOrNull(2)?.ifEmpty { null })
+                } else null
+            }
+        }
+    }
+    return null
+}
+
+private fun saveCachedM3U(context: Context, url: String, channels: List<TvChannel>) {
+    val sharedPrefs = context.getSharedPreferences("M3UCache", Context.MODE_PRIVATE)
+    val data = channels.joinToString("\n") { "${it.name}|${it.url}|${it.logoUrl ?: ""}" }
+    sharedPrefs.edit().putString("cached_url", url).putString("cached_data", data).apply()
 }
 
 private fun parseM3U(url: String): List<TvChannel> {
@@ -981,9 +1068,9 @@ fun SettingsSection(m3uLink: String, onExpandNav: () -> Unit, onSave: (String) -
     var textValue by rememberSaveable { mutableStateOf(m3uLink) }
     val focusRequester = remember { FocusRequester() }
     
-    Column {
-        Text("M3U Playlist URL", style = MaterialTheme.typography.labelLarge)
-        Spacer(modifier = Modifier.height(8.dp))
+    Column(modifier = Modifier.fillMaxWidth(0.8f)) {
+        Text("M3U Playlist URL", style = MaterialTheme.typography.labelLarge, color = Color.White.copy(alpha = 0.6f))
+        Spacer(modifier = Modifier.height(12.dp))
         Surface(
             onClick = { focusRequester.requestFocus() },
             modifier = Modifier
@@ -996,28 +1083,31 @@ fun SettingsSection(m3uLink: String, onExpandNav: () -> Unit, onSave: (String) -
                 },
             scale = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
             colors = ClickableSurfaceDefaults.colors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f)
-            )
+                containerColor = AppleLightGray,
+                focusedContainerColor = Color.White
+            ),
+            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp))
         ) {
+            var isFocused by remember { mutableStateOf(false) }
             BasicTextField(
                 value = textValue,
                 onValueChange = { textValue = it },
                 modifier = Modifier
-                    .padding(16.dp)
+                    .padding(20.dp)
                     .fillMaxWidth()
-                    .focusRequester(focusRequester),
+                    .focusRequester(focusRequester)
+                    .onFocusChanged { isFocused = it.isFocused },
                 textStyle = TextStyle(
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = if (isFocused) Color.Black else Color.White,
                     fontSize = 18.sp
                 ),
-                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                cursorBrush = SolidColor(if (isFocused) Color.Black else Color.White),
                 decorationBox = { innerTextField ->
                     Box {
                         if (textValue.isEmpty()) {
                             Text(
                                 "Enter M3U link here...",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                color = if (isFocused) Color.Black.copy(alpha = 0.4f) else Color.White.copy(alpha = 0.4f)
                             )
                         }
                         innerTextField()
@@ -1026,57 +1116,26 @@ fun SettingsSection(m3uLink: String, onExpandNav: () -> Unit, onSave: (String) -
             )
         }
         
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(40.dp))
         
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Button(
-                onClick = { 
-                    val demoUrl = "internal://demo"
-                    textValue = demoUrl
-                    onSave(demoUrl)
-                },
-                modifier = Modifier
-                    .padding(end = 16.dp)
-                    .onKeyEvent {
-                        if (it.key == Key.DirectionLeft && it.type == KeyEventType.KeyDown) {
-                            onExpandNav()
-                            true
-                        } else false
-                    },
-                colors = ButtonDefaults.colors(
-                    containerColor = MaterialTheme.colorScheme.tertiary,
-                    focusedContainerColor = MaterialTheme.colorScheme.tertiaryContainer
-                )
-            ) {
-                Text("Load Offline Demo")
+            SettingsButton("Load Offline Demo", onExpandNav) { 
+                val demoUrl = "internal://demo"
+                textValue = demoUrl
+                onSave(demoUrl)
             }
 
-            Button(
-                onClick = { 
-                    val sampleUrl = "https://raw.githubusercontent.com/ankitnaik1/Dot_Files/main/channels.m3u"
-                    textValue = sampleUrl
-                    onSave(sampleUrl)
-                },
-                modifier = Modifier.padding(end = 16.dp),
-                colors = ButtonDefaults.colors(
-                    containerColor = MaterialTheme.colorScheme.secondary,
-                    focusedContainerColor = MaterialTheme.colorScheme.secondaryContainer
-                )
-            ) {
-                Text("Load Sample URL")
+            SettingsButton("Load Sample URL", onExpandNav) { 
+                val sampleUrl = "https://raw.githubusercontent.com/ankitnaik1/Dot_Files/main/channels.m3u"
+                textValue = sampleUrl
+                onSave(sampleUrl)
             }
 
-            Button(
-                onClick = { onSave(textValue) },
-                colors = ButtonDefaults.colors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    focusedContainerColor = MaterialTheme.colorScheme.primaryContainer
-                )
-            ) {
-                Text("Save and Load")
+            SettingsButton("Save and Load", onExpandNav, isPrimary = true) { 
+                onSave(textValue) 
             }
         }
     }
@@ -1084,28 +1143,74 @@ fun SettingsSection(m3uLink: String, onExpandNav: () -> Unit, onSave: (String) -
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun AppItem(app: LaunchableApp, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Surface(
+fun SettingsButton(
+    text: String, 
+    onExpandNav: () -> Unit, 
+    isPrimary: Boolean = false,
+    onClick: () -> Unit
+) {
+    Button(
         onClick = onClick,
-        modifier = modifier
-            .padding(12.dp)
-            .aspectRatio(16f / 9f),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-            contentColor = MaterialTheme.colorScheme.onSurface,
-            focusedContainerColor = MaterialTheme.colorScheme.primary,
-            focusedContentColor = MaterialTheme.colorScheme.onPrimary
+        modifier = Modifier.onKeyEvent {
+            if (it.key == Key.DirectionLeft && it.type == KeyEventType.KeyDown) {
+                onExpandNav()
+                true
+            } else false
+        },
+        colors = ButtonDefaults.colors(
+            containerColor = if (isPrimary) Color.White.copy(alpha = 0.2f) else AppleLightGray,
+            focusedContainerColor = Color.White,
+            contentColor = Color.White,
+            focusedContentColor = Color.Black
         ),
-        shape = ClickableSurfaceDefaults.shape(MaterialTheme.shapes.medium)
+        shape = ButtonDefaults.shape(RoundedCornerShape(12.dp))
     ) {
-        Box(modifier = Modifier.fillMaxSize()) {
-            Image(
-                bitmap = app.icon,
-                contentDescription = app.name,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.FillBounds
-            )
+        Text(text, modifier = Modifier.padding(horizontal = 8.dp))
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+fun AppItem(app: LaunchableApp, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    var isFocused by remember { mutableStateOf(false) }
+    
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = modifier.width(200.dp)
+    ) {
+        Surface(
+            onClick = onClick,
+            modifier = Modifier
+                .aspectRatio(16f / 9f)
+                .onFocusChanged { isFocused = it.isFocused },
+            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.15f),
+            colors = ClickableSurfaceDefaults.colors(
+                containerColor = AppleLightGray,
+                contentColor = Color.White,
+                focusedContainerColor = Color.White,
+                focusedContentColor = Color.Black
+            ),
+            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp))
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                Image(
+                    bitmap = app.icon,
+                    contentDescription = app.name,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.FillBounds
+                )
+            }
         }
+        
+        Spacer(modifier = Modifier.height(12.dp))
+        
+        Text(
+            text = app.name,
+            style = MaterialTheme.typography.labelLarge,
+            color = if (isFocused) Color.White else Color.White.copy(alpha = 0.5f),
+            fontWeight = if (isFocused) FontWeight.Bold else FontWeight.Normal,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }

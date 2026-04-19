@@ -2,21 +2,23 @@ package com.example.launchtv.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Gruvbox Dark Palette
+// Apple TV OS inspired palette - refined for better visibility and translucency
+val AppleDarkBg = Color(0xFF000000) // Pure black for OLED-like backgrounds
+val AppleGray = Color(0xFF1C1C1E)
+val AppleLightGray = Color(0xFF2C2C2E)
+val AppleTextPrimary = Color(0xFFFFFFFF)
+val AppleTextSecondary = Color(0xFFEBEBF5).copy(alpha = 0.6f)
+val AppleAccent = Color(0xFFFFFFFF) 
+val AppleSurface = Color(0xFF252525)
+
+// Translucent colors for glass effect
+val AppleGlass = Color(0xFF1C1C1E).copy(alpha = 0.8f)
+val AppleGlassLight = Color(0xFFFFFFFF).copy(alpha = 0.15f)
+val AppleGlassFocus = Color(0xFFFFFFFF).copy(alpha = 0.95f)
+
+// Keep Gruvbox for reference
 val GruvboxBg = Color(0xFF282828)
 val GruvboxFg = Color(0xFFEBDBB2)
-val GruvboxRed = Color(0xFFFB4934)
-val GruvboxGreen = Color(0xFFB8BB26)
-val GruvboxYellow = Color(0xFFFABD2F)
-val GruvboxBlue = Color(0xFF83A598)
-val GruvboxPurple = Color(0xFFD3869B)
-val GruvboxAqua = Color(0xFF8EC07C)
-val GruvboxGray = Color(0xFF928374)
-val GruvboxOrange = Color(0xFFFE8019)
-
 val GruvboxBg0_H = Color(0xFF1D2021)
-val GruvboxBg0_S = Color(0xFF32302F)
 val GruvboxBg1 = Color(0xFF3C3836)
 val GruvboxBg2 = Color(0xFF504945)
-val GruvboxBg3 = Color(0xFF665C54)
-val GruvboxBg4 = Color(0xFF7C6F64)
