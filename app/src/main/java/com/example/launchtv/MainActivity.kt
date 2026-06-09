@@ -618,6 +618,7 @@ fun VideoPlayer(
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var lastInteractionTime by remember { mutableStateOf(System.currentTimeMillis()) }
+    var retryCount by remember(url) { mutableStateOf(0) }
     
     val videoFocusRequester = remember { FocusRequester() }
 
@@ -691,6 +692,11 @@ fun VideoPlayer(
                         isLoading = (state == Player.STATE_BUFFERING)
                         if (state == Player.STATE_READY) {
                             errorMessage = null
+                            retryCount = 0
+                        }
+                        if (state == Player.STATE_ENDED && retryCount < 30) {
+                            retryCount++
+                            errorMessage = "Stream ended. Reconnecting ($retryCount/30)..."
                         }
                     }
 
@@ -716,22 +722,39 @@ fun VideoPlayer(
                             }
                         }
 
-                        isLoading = false
-                        errorMessage = when (error.errorCode) {
-                            PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED -> "Network Connection Error"
-                            PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS -> "Source blocked or 404"
-                            PlaybackException.ERROR_CODE_DECODER_INIT_FAILED -> "Unsupported Video Format"
-                            PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
-                            PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED -> "Invalid Stream Format"
-                            else -> "Cannot play this channel"
+                        val errorDesc = when (error.errorCode) {
+                            PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED -> "Network Error"
+                            PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS -> "Source blocked/404"
+                            else -> "Stream Error"
+                        }
+
+                        if (retryCount < 30) {
+                            retryCount++
+                            errorMessage = "$errorDesc. Retrying ($retryCount/30)..."
+                        } else {
+                            isLoading = false
+                            errorMessage = "Failed: $errorDesc"
                         }
                     }
                 })
             }
     }
 
-    LaunchedEffect(url) {
-        errorMessage = null
+    LaunchedEffect(url, retryCount) {
+        if (retryCount > 30) return@LaunchedEffect
+        
+        Log.d("LaunchTV", "Triggering load/retry: url=$url, retryCount=$retryCount")
+        
+        if (retryCount > 0) {
+            errorMessage = errorMessage ?: "Reconnecting..."
+            delay(2000)
+        }
+
+        // Avoid re-preparing if we just recovered and retryCount reset to 0
+        if (retryCount == 0 && exoPlayer.playbackState == Player.STATE_READY) {
+            return@LaunchedEffect
+        }
+
         isLoading = true
         
         // Very aggressive MIME type detection to handle IPTV redirectors
