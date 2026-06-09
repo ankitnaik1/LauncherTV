@@ -82,6 +82,11 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.graphics.drawscope.withTransform
+import coil.request.ImageRequest
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.extractor.DefaultExtractorsFactory
@@ -189,7 +194,7 @@ fun MainScreen() {
                     LaunchableApp(
                         name = resolveInfo.loadLabel(pm).toString(),
                         packageName = packageName,
-                        icon = drawable.toBitmap().asImageBitmap(),
+                        icon = drawable.toBitmap(width = 320, height = 180).asImageBitmap(),
                         intent = launchIntent
                     )
                 } else {
@@ -681,8 +686,13 @@ fun VideoPlayer(
             .setDataSourceFactory(httpDataSourceFactory)
             .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(3)) // Retry up to 3 times
 
+        val loadControl = DefaultLoadControl.Builder()
+            .setTargetBufferBytes(16 * 1024 * 1024) // Limit buffer to 16MB for FireTV Stick
+            .build()
+
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaSourceFactory)
+            .setLoadControl(loadControl)
             .setAudioAttributes(AudioAttributes.DEFAULT, true)
             .build().apply {
                 val player = this
@@ -690,13 +700,16 @@ fun VideoPlayer(
                 addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(state: Int) {
                         isLoading = (state == Player.STATE_BUFFERING)
+                        Log.d("LaunchTV", "Player State changed: $state")
                         if (state == Player.STATE_READY) {
                             errorMessage = null
                             retryCount = 0
                         }
                         if (state == Player.STATE_ENDED && retryCount < 30) {
+                            Log.d("LaunchTV", "Stream ended, incrementing retryCount")
                             retryCount++
-                            errorMessage = "Stream ended. Reconnecting ($retryCount/30)..."
+                            isLoading = true
+                            errorMessage = null
                         }
                     }
 
@@ -729,8 +742,10 @@ fun VideoPlayer(
                         }
 
                         if (retryCount < 30) {
+                            Log.d("LaunchTV", "Player error, incrementing retryCount")
                             retryCount++
-                            errorMessage = "$errorDesc. Retrying ($retryCount/30)..."
+                            isLoading = true
+                            errorMessage = null
                         } else {
                             isLoading = false
                             errorMessage = "Failed: $errorDesc"
@@ -746,7 +761,6 @@ fun VideoPlayer(
         Log.d("LaunchTV", "Triggering load/retry: url=$url, retryCount=$retryCount")
         
         if (retryCount > 0) {
-            errorMessage = errorMessage ?: "Reconnecting..."
             delay(2000)
         }
 
@@ -804,6 +818,7 @@ fun VideoPlayer(
             
         exoPlayer.setMediaSource(mediaSource)
         exoPlayer.prepare()
+        exoPlayer.play()
     }
 
     DisposableEffect(Unit) {
@@ -889,24 +904,27 @@ fun AppleLoadingIndicator(modifier: Modifier = Modifier) {
         label = "rotation"
     )
     
-    Box(
-        modifier = modifier
-            .size(40.dp)
-            .rotate(angle),
-        contentAlignment = Alignment.Center
-    ) {
-        for (i in 0 until 8) {
-            Box(
-                modifier = Modifier
-                    .rotate(i * 45f)
-                    .align(Alignment.TopCenter)
-                    .width(3.dp)
-                    .height(10.dp)
-                    .background(
-                        Color.White.copy(alpha = (i + 1) / 8f),
-                        RoundedCornerShape(2.dp)
+    Canvas(modifier = modifier.size(40.dp)) {
+        val strokeWidth = 3.dp.toPx()
+        val center = center
+        
+        withTransform({
+            rotate(angle, center)
+        }) {
+            for (i in 0 until 8) {
+                val alpha = (i + 1) / 8f
+                withTransform({
+                    rotate(i * 45f, center)
+                }) {
+                    drawLine(
+                        color = Color.White.copy(alpha = alpha),
+                        start = center.copy(y = 2.dp.toPx()),
+                        end = center.copy(y = 12.dp.toPx()),
+                        strokeWidth = strokeWidth,
+                        cap = StrokeCap.Round
                     )
-            )
+                }
+            }
         }
     }
 }
@@ -1038,7 +1056,11 @@ fun ChannelItem(
             ) {
                 if (!channel.logoUrl.isNullOrEmpty()) {
                     AsyncImage(
-                        model = channel.logoUrl,
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(channel.logoUrl)
+                            .crossfade(false)
+                            .size(120)
+                            .build(),
                         contentDescription = null,
                         modifier = Modifier
                             .size(40.dp)
@@ -1264,14 +1286,14 @@ fun AppItem(app: LaunchableApp, modifier: Modifier = Modifier, onClick: () -> Un
             modifier = Modifier
                 .aspectRatio(16f / 9f)
                 .onFocusChanged { isFocused = it.isFocused },
-            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.15f),
+            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
             colors = ClickableSurfaceDefaults.colors(
                 containerColor = AppleLightGray,
                 contentColor = Color.White,
                 focusedContainerColor = Color.White,
                 focusedContentColor = Color.Black
             ),
-            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp))
+            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp))
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 Image(
