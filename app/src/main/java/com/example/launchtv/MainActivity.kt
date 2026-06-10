@@ -81,11 +81,12 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.graphics.drawscope.withTransform
 import coil.request.ImageRequest
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.common.C
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
@@ -623,7 +624,14 @@ fun VideoPlayer(
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var lastInteractionTime by remember { mutableStateOf(System.currentTimeMillis()) }
-    var retryCount by remember(url) { mutableStateOf(0) }
+    var retryCount by remember { mutableStateOf(0) }
+    
+    // Reset retry count and errors when URL changes
+    LaunchedEffect(url) {
+        retryCount = 0
+        errorMessage = null
+        isLoading = true
+    }
     
     val videoFocusRequester = remember { FocusRequester() }
 
@@ -644,31 +652,9 @@ fun VideoPlayer(
     // Use a ref to access latest URL info in the player listener without recreating it
     val urlInfoRef = remember { mutableStateOf(baseUri to headers) }
     urlInfoRef.value = baseUri to headers
-    
-    LaunchedEffect(showOverlay, lastInteractionTime) {
-        if (showOverlay) {
-            delay(3000)
-            showOverlay = false
-        }
-    }
 
-    LaunchedEffect(showOverlay) {
-        if (!showOverlay) {
-            if (!isNavVisible) {
-                videoFocusRequester.requestFocus()
-            }
-        }
-    }
-
-    BackHandler {
-        if (showOverlay) {
-            showOverlay = false
-        } else {
-            onBack()
-        }
-    }
-
-    val exoPlayer = remember {
+    // Create player instance keyed by URL AND retryCount to force fresh hardware decoder on every attempt
+    val exoPlayer = remember(url, retryCount) {
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
             .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0")
             .setAllowCrossProtocolRedirects(true)
@@ -677,101 +663,77 @@ fun VideoPlayer(
                 "Connection" to "keep-alive"
             ))
         
-        // Optimize extractors for IPTV (especially TS streams)
         val extractorsFactory = DefaultExtractorsFactory()
             .setTsExtractorFlags(DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES or 
                                  DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS)
 
         val mediaSourceFactory = DefaultMediaSourceFactory(context, extractorsFactory)
             .setDataSourceFactory(httpDataSourceFactory)
-            .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(3)) // Retry up to 3 times
 
         val loadControl = DefaultLoadControl.Builder()
-            .setTargetBufferBytes(16 * 1024 * 1024) // Limit buffer to 16MB for FireTV Stick
+            .setTargetBufferBytes(16 * 1024 * 1024)
             .build()
 
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
             .setAudioAttributes(AudioAttributes.DEFAULT, true)
+            .setHandleAudioBecomingNoisy(true)
+            .setWakeMode(C.WAKE_MODE_NETWORK)
             .build().apply {
-                val player = this
                 playWhenReady = true
                 addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(state: Int) {
-                        isLoading = (state == Player.STATE_BUFFERING)
-                        Log.d("LaunchTV", "Player State changed: $state")
+                        Log.d("LaunchTV", "Playback state changed: $state")
+                        isLoading = (state == Player.STATE_BUFFERING || state == Player.STATE_IDLE)
                         if (state == Player.STATE_READY) {
                             errorMessage = null
-                            retryCount = 0
                         }
                         if (state == Player.STATE_ENDED && retryCount < 30) {
-                            Log.d("LaunchTV", "Stream ended, incrementing retryCount")
+                            Log.d("LaunchTV", "Stream ended, forcing hardware reset via retry")
                             retryCount++
-                            isLoading = true
-                            errorMessage = null
                         }
                     }
 
                     override fun onPlayerError(error: PlaybackException) {
-                        Log.e("LaunchTV", "ExoPlayer Error: ${error.message} (Code: ${error.errorCode})", error)
-                        
-                        // Retry logic for UnrecognizedInputFormatException
-                        if (error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED ||
-                            error.errorCode == PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED) {
-                            
-                            val currentMediaItem = player.currentMediaItem
-                            
-                            if (currentMediaItem?.localConfiguration?.mimeType != MimeTypes.APPLICATION_M3U8) {
-                                Log.d("LaunchTV", "Retrying with HLS MIME type...")
-                                val (retryBaseUri, _) = urlInfoRef.value
-                                val retryMediaItem = MediaItem.Builder()
-                                    .setUri(retryBaseUri)
-                                    .setMimeType(MimeTypes.APPLICATION_M3U8)
-                                    .build()
-                                player.setMediaItem(retryMediaItem)
-                                player.prepare()
-                                return
-                            }
-                        }
-
-                        val errorDesc = when (error.errorCode) {
-                            PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED -> "Network Error"
-                            PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS -> "Source blocked/404"
-                            else -> "Stream Error"
-                        }
-
+                        Log.e("LaunchTV", "ExoPlayer Error: ${error.errorCodeName} - ${error.message}", error)
                         if (retryCount < 30) {
-                            Log.d("LaunchTV", "Player error, incrementing retryCount")
+                            Log.d("LaunchTV", "Player error, forcing hardware reset via retry")
                             retryCount++
-                            isLoading = true
-                            errorMessage = null
                         } else {
                             isLoading = false
-                            errorMessage = "Failed: $errorDesc"
+                            errorMessage = "Playback Failed: ${error.errorCodeName}"
                         }
                     }
                 })
             }
     }
 
-    LaunchedEffect(url, retryCount) {
-        if (retryCount > 30) return@LaunchedEffect
-        
-        Log.d("LaunchTV", "Triggering load/retry: url=$url, retryCount=$retryCount")
-        
-        if (retryCount > 0) {
-            delay(2000)
+    // Cleanup player when it's replaced or component disposed
+    DisposableEffect(exoPlayer) {
+        onDispose {
+            exoPlayer.release()
         }
+    }
 
-        // Avoid re-preparing if we just recovered and retryCount reset to 0
-        if (retryCount == 0 && exoPlayer.playbackState == Player.STATE_READY) {
-            return@LaunchedEffect
+    // Watchdog for stuck buffering
+    LaunchedEffect(exoPlayer.playbackState, url) {
+        if (exoPlayer.playbackState == Player.STATE_BUFFERING) {
+            delay(15000)
+            if (exoPlayer.playbackState == Player.STATE_BUFFERING) {
+                retryCount++
+            }
+        }
+    }
+
+    // Load Logic - triggered whenever exoPlayer is recreated (which happens on retry)
+    LaunchedEffect(exoPlayer) {
+        if (retryCount > 0) {
+            delay(2000) // Delay retry slightly to allow network/socket recovery
         }
 
         isLoading = true
         
-        // Very aggressive MIME type detection to handle IPTV redirectors
         val isHls = baseUri.contains("m3u8", ignoreCase = true) || 
                     baseUri.contains("/live/") || baseUri.contains("/stream/") || 
                     baseUri.contains("get.php") || baseUri.contains("playlist") ||
@@ -782,49 +744,20 @@ fun VideoPlayer(
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
             .setUserAgent(headers["User-Agent"] ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
             .setAllowCrossProtocolRedirects(true)
-            .setDefaultRequestProperties(mapOf(
-                "Accept" to "*/*",
-                "Connection" to "keep-alive"
-            ) + headers.filterKeys { !it.equals("User-Agent", ignoreCase = true) })
 
         val extractorsFactory = DefaultExtractorsFactory()
             .setTsExtractorFlags(DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES or 
                                  DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS)
 
         val mediaSource: MediaSource = when {
-            isHls -> {
-                HlsMediaSource.Factory(httpDataSourceFactory)
-                    .setAllowChunklessPreparation(true)
-                    .createMediaSource(MediaItem.Builder()
-                        .setUri(baseUri)
-                        .setMimeType(MimeTypes.APPLICATION_M3U8)
-                        .build())
-            }
-            isTs -> {
-                ProgressiveMediaSource.Factory(httpDataSourceFactory, extractorsFactory)
-                    .createMediaSource(MediaItem.Builder()
-                        .setUri(baseUri)
-                        .setMimeType(MimeTypes.VIDEO_MP2T)
-                        .build())
-            }
-            else -> {
-                DefaultMediaSourceFactory(context, extractorsFactory)
-                    .setDataSourceFactory(httpDataSourceFactory)
-                    .createMediaSource(MediaItem.Builder()
-                        .setUri(baseUri)
-                        .build())
-            }
+            isHls -> HlsMediaSource.Factory(httpDataSourceFactory).createMediaSource(MediaItem.Builder().setUri(baseUri).setMimeType(MimeTypes.APPLICATION_M3U8).build())
+            isTs -> ProgressiveMediaSource.Factory(httpDataSourceFactory, extractorsFactory).createMediaSource(MediaItem.Builder().setUri(baseUri).setMimeType(MimeTypes.VIDEO_MP2T).build())
+            else -> DefaultMediaSourceFactory(context, extractorsFactory).setDataSourceFactory(httpDataSourceFactory).createMediaSource(MediaItem.Builder().setUri(baseUri).build())
         }
             
         exoPlayer.setMediaSource(mediaSource)
         exoPlayer.prepare()
         exoPlayer.play()
-    }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            exoPlayer.release()
-        }
     }
 
     Box(
@@ -866,11 +799,15 @@ fun VideoSurface(
     focusRequester: FocusRequester
 ) {
     AndroidView(
-        factory = {
-            PlayerView(it).apply {
-                player = exoPlayer
+        factory = { context ->
+            PlayerView(context).apply {
                 useController = false
                 keepScreenOn = true
+            }
+        },
+        update = { view ->
+            if (view.player != exoPlayer) {
+                view.player = exoPlayer
             }
         },
         modifier = Modifier
